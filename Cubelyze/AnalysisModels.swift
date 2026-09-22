@@ -72,11 +72,31 @@ struct SolveSegment: Identifiable, Codable {
 struct PendingSegment: Codable { let type: SolveSegmentType; let start: Double }
 struct PendingAnnotation: Codable { let category: AnnotationCategory; let start: Double }
 
-struct AnalysisDocument: Codable {
-    let schemaVersion: Int
+struct Solve: Identifiable, Codable {
+    let id: UUID
     var videoPath: String
     var videoBookmark: Data?
+    var recordedAt: Date
+    let importedAt: Date
+    var scramble: String?
     var segments: [SolveSegment]
     var pendingSegment: PendingSegment?
     var annotations: [VideoAnnotation]
+
+    init(id: UUID = UUID(), videoPath: String, videoBookmark: Data?,
+         recordedAt: Date, importedAt: Date = Date(), scramble: String? = nil,
+         segments: [SolveSegment] = [], pendingSegment: PendingSegment? = nil,
+         annotations: [VideoAnnotation] = []) {
+        self.id = id
+        self.videoPath = videoPath
+        self.videoBookmark = videoBookmark
+        self.recordedAt = recordedAt
+        self.importedAt = importedAt
+        self.scramble = scramble
+        self.segments = segments
+        self.pendingSegment = pendingSegment
+        self.annotations = annotations
+    }
+
+    var filename: String { URL(fileURLWithPath: videoPath).lastPathComponent }
 }

@@ -2,7 +2,7 @@
 
 A local macOS application for reviewing Rubik's Cube solve videos.
 
-Open a local video with the native file picker and review it with AVFoundation.
+Import a local video into the solve library and review it with AVFoundation.
 Includes a click-and-drag review timeline, frame stepping, playback speeds,
 elapsed/total time in milliseconds, and timestamped annotations.
 Requires macOS 14 or later. Built with Swift and SwiftUI; no third-party dependencies.
@@ -28,7 +28,7 @@ build commands below are the available build checks.
 ## Run
 
 Open `Cubelyze.xcodeproj` in Xcode, select the Cubelyze scheme and My Mac,
-then press Run. Click **Open Video…** (⌘O) and choose a `.mov` or `.mp4` file
+then press Run. Click **Import Video…** (⌘O) and choose a `.mov` or `.mp4` file
 with a macOS-supported codec. Playback starts automatically; click **Pause** or
 press Space to toggle playback.
 
@@ -58,10 +58,11 @@ Pause events appear as spans on a separate timeline lane; the other events appea
 as point markers. All appear in the chronological annotation list.
 Click a marker, span, or list entry to seek to its start; click its trash button to delete it.
 Select an event from its timeline marker/span or the annotation list to edit an
-optional note or delete it. Analyses autosave as human-readable JSON in
-`~/Library/Application Support/Cubelyze/Projects` and restore when the same video
-or the last project is reopened. The JSON stores a security-scoped bookmark for
-persistent video access; the original video is never modified.
+optional note or delete it. Each solve autosaves as human-readable JSON in
+`~/Library/Application Support/Cubelyze/Solves` and appears in the library when
+the app reopens. The JSON stores a security-scoped bookmark for persistent video
+access; the original video is never modified. Existing files in the older
+`Projects` directory are retained but are not automatically added to the library.
 
 The statistics strip summarizes analyzed solve and phase durations, pause time,
 pause count and longest pause, plus Rotation, Regrip, and Other counts. Click the
@@ -115,6 +116,7 @@ otherwise macOS Gatekeeper may warn users.
 - macOS 14 or later is required.
 - Video support is limited to codecs supported by AVFoundation on the user's Mac.
 - Analyses autosave locally, but there is no in-app export or sharing workflow yet.
+- The library currently imports one video at a time; repeat imports create separate solves.
 - There is no automated test suite yet; builds and affected workflows must be
   verified manually.
 - Release archives produced by the included script are not notarized.

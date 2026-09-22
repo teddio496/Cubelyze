@@ -24,6 +24,8 @@ final class PlaybackModel: ObservableObject {
     @Published var segmentMessage: String?
     @Published var errorMessage: String?
     @Published private(set) var saveMessage: String?
+    @Published private(set) var solves: [Solve] = []
+    @Published private(set) var selectedSolveID: UUID?
     private var seekTarget: CMTime?
     private var isSeeking = false
     private var pendingSteps = 0
@@ -33,12 +35,11 @@ final class PlaybackModel: ObservableObject {
     private var endObserver: NSObjectProtocol?
     private var terminationObserver: NSObjectProtocol?
     private var saveTask: Task<Void, Never>?
-    private var projectURL: URL?
     private var videoURL: URL?
     private var scopedVideoURL: URL?
-    private var recoveryDocument: AnalysisDocument?
-    private var recoveryProjectURL: URL?
     private let analysisStore = AnalysisStore()
+
+    func videoExists(for solve: Solve) -> Bool { analysisStore.videoExists(for: solve) }
 
     init() {
         endObserver = NotificationCenter.default.addObserver(
@@ -56,7 +57,8 @@ final class PlaybackModel: ObservableObject {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.saveNow() }
         }
-        restoreLastProject()
+        do { solves = try analysisStore.allSolves() }
+        catch { errorMessage = "Could not load solve library: \(error.localizedDescription)" }
     }
 
     deinit {
@@ -80,46 +82,42 @@ final class PlaybackModel: ObservableObject {
 
     func open(_ url: URL) {
         let standardizedURL = url.standardizedFileURL
-        if let recoveryDocument,
-           URL(fileURLWithPath: recoveryDocument.videoPath).lastPathComponent == standardizedURL.lastPathComponent {
-            let destination = recoveryProjectURL ?? projectFileURL(for: standardizedURL)
-            self.recoveryDocument = nil
-            recoveryProjectURL = nil
-            openVideo(standardizedURL, restoring: recoveryDocument, projectURL: destination)
-            return
-        }
-        let destination = projectFileURL(for: standardizedURL)
-        if let document = analysisStore.savedDocument(for: destination) {
-            openVideo(standardizedURL, restoring: document, projectURL: destination)
-            return
-        }
-        openVideo(standardizedURL, restoring: nil, projectURL: destination)
+        let recordedAt = (try? standardizedURL.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? Date()
+        let solve = Solve(videoPath: standardizedURL.path,
+                          videoBookmark: analysisStore.bookmark(for: standardizedURL),
+                          recordedAt: recordedAt)
+        do {
+            try analysisStore.save(solve)
+            solves.insert(solve, at: 0)
+            solves.sort { $0.recordedAt > $1.recordedAt }
+            openSolve(solve)
+        } catch { saveMessage = "Could not create solve: \(error.localizedDescription)" }
     }
 
-    private func openVideo(_ url: URL, restoring document: AnalysisDocument?, projectURL: URL) {
+    func openSolve(_ solve: Solve) {
+        let url = analysisStore.resolveVideoURL(for: solve)
         saveTask?.cancel()
         saveNow()
         player.pause()
         scopedVideoURL?.stopAccessingSecurityScopedResource()
+        selectedSolveID = solve.id
         if url.startAccessingSecurityScopedResource() { scopedVideoURL = url } else { scopedVideoURL = nil }
-        videoURL = url
-        self.projectURL = projectURL
-        analysisStore.remember(projectURL: projectURL)
-        filename = url.lastPathComponent
-        annotations = document?.annotations ?? []
+        videoURL = FileManager.default.fileExists(atPath: url.path) ? url : nil
+        filename = solve.filename
+        annotations = solve.annotations
         selectedAnnotationID = nil
         pendingAnnotation = nil
         annotationMessage = nil
-        segments = document?.segments ?? []
+        segments = solve.segments
         selectedSegmentID = nil
-        pendingSegment = document?.pendingSegment
+        pendingSegment = solve.pendingSegment
         segmentMessage = nil
         position = 0
         duration = 0
         videoAspectRatio = 16.0 / 9.0
         isReady = false
         isPlaying = false
-        errorMessage = nil
+        errorMessage = videoURL == nil ? "The video is missing or was moved." : nil
         seekTarget = nil
         isSeeking = false
         pendingSteps = 0
@@ -127,9 +125,22 @@ final class PlaybackModel: ObservableObject {
         playAfterSeek = false
         scrubPosition = nil
         reachedEnd = false
-        player.replaceCurrentItem(with: AVPlayerItem(url: url))
-        player.play()
-        scheduleSave()
+        player.replaceCurrentItem(with: videoURL.map(AVPlayerItem.init(url:)))
+        if videoURL != nil { player.play() }
+    }
+
+    func showLibrary() {
+        saveTask?.cancel()
+        saveNow()
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+        scopedVideoURL?.stopAccessingSecurityScopedResource()
+        scopedVideoURL = nil
+        videoURL = nil
+        selectedSolveID = nil
+        filename = nil
+        isReady = false
+        isPlaying = false
     }
 
     func togglePlayback() {
@@ -309,10 +320,8 @@ final class PlaybackModel: ObservableObject {
     var longestPause: VideoAnnotation? { pauseAnnotations.max { ($0.timing.duration ?? 0) < ($1.timing.duration ?? 0) } }
     func eventCount(_ category: AnnotationCategory) -> Int { annotations.filter { $0.category == category }.count }
 
-    private func projectFileURL(for videoURL: URL) -> URL { analysisStore.projectURL(for: videoURL) }
-
     private func scheduleSave() {
-        guard projectURL != nil, videoURL != nil else { return }
+        guard selectedSolveID != nil else { return }
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(400))
@@ -322,32 +331,19 @@ final class PlaybackModel: ObservableObject {
     }
 
     private func saveNow() {
-        guard let projectURL, let videoURL else { return }
+        guard let id = selectedSolveID,
+              let index = solves.firstIndex(where: { $0.id == id }) else { return }
         do {
-            let bookmark = analysisStore.bookmark(for: videoURL)
-            let document = AnalysisDocument(schemaVersion: 1, videoPath: videoURL.path,
-                                            videoBookmark: bookmark, segments: segments,
-                                            pendingSegment: pendingSegment, annotations: annotations)
-            try analysisStore.save(document: document, to: projectURL)
+            var solve = solves[index]
+            solve.segments = segments
+            solve.pendingSegment = pendingSegment
+            solve.annotations = annotations
+            try analysisStore.save(solve)
+            solves[index] = solve
             saveMessage = nil
         } catch {
             saveMessage = "Could not save analysis: \(error.localizedDescription)"
         }
-    }
-
-    private func restoreLastProject() {
-        guard let saved = analysisStore.lastProject() else { return }
-        let savedURL = saved.url
-        let document = saved.document
-        let candidate = analysisStore.resolveVideoURL(for: document).url!
-        guard FileManager.default.fileExists(atPath: candidate.path) else {
-            errorMessage = "The saved video is missing or was moved. Use Open Video… to locate it."
-            filename = URL(fileURLWithPath: document.videoPath).lastPathComponent
-            recoveryDocument = document
-            recoveryProjectURL = savedURL
-            return
-        }
-        openVideo(candidate, restoring: document, projectURL: savedURL)
     }
 
     func stepFrame(by count: Int) {

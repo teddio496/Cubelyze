@@ -6,8 +6,22 @@ struct ContentView: View {
     private let refreshTimer = Timer.publish(every: 1.0 / 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
+        Group {
+            if playback.selectedSolveID == nil {
+                SolveLibrary(playback: playback)
+            } else {
+                analyzer
+            }
+        }
+        .frame(minWidth: 860, minHeight: 620)
+        .onReceive(refreshTimer) { _ in playback.refresh() }
+        .onDisappear { playback.player.pause() }
+    }
+
+    private var analyzer: some View {
         VStack(spacing: 10) {
             HStack {
+                Button("Library") { playback.showLibrary() }
                 Button("Open Video…", action: playback.chooseVideo)
                     .keyboardShortcut("o")
                 Text(playback.filename ?? "Choose a local video to begin")
@@ -38,9 +52,60 @@ struct ContentView: View {
             }
         }
         .padding()
-        .frame(minWidth: 860, minHeight: 620)
-        .onReceive(refreshTimer) { _ in playback.refresh() }
-        .onDisappear { playback.player.pause() }
+    }
+}
+
+private struct SolveLibrary: View {
+    @ObservedObject var playback: PlaybackModel
+
+    private var days: [Date] {
+        Array(Set(playback.solves.map { Calendar.current.startOfDay(for: $0.recordedAt) }))
+            .sorted(by: >)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("Solve Library").font(.largeTitle).fontWeight(.semibold)
+                Spacer()
+                Button("Import Video…", action: playback.chooseVideo)
+                    .keyboardShortcut("o")
+            }
+            if let message = playback.errorMessage ?? playback.saveMessage {
+                Text(message).foregroundStyle(.red)
+            }
+            if playback.solves.isEmpty {
+                ContentUnavailableView("No solves yet", systemImage: "video",
+                                       description: Text("Import a video to start analyzing a solve."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    ForEach(days, id: \.self) { day in
+                        Section(day.formatted(.dateTime.weekday(.wide).month(.wide).day().year())) {
+                            ForEach(playback.solves.filter {
+                                Calendar.current.isDate($0.recordedAt, inSameDayAs: day)
+                            }) { solve in
+                                Button { playback.openSolve(solve) } label: {
+                                    HStack {
+                                        Text(solve.recordedAt.formatted(date: .omitted, time: .shortened))
+                                            .monospacedDigit()
+                                        Text(solve.filename).lineLimit(1)
+                                        Spacer()
+                                        if !playback.videoExists(for: solve) {
+                                            Label("Video may be missing", systemImage: "exclamationmark.triangle")
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding()
     }
 }
 
