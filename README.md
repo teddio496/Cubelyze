@@ -42,6 +42,16 @@ Annotations appear on the timeline and in a chronological list beside the video.
 Click a marker or list entry to seek to it; click its trash button to delete it.
 Annotations are held in memory only and cleared when you open a video or quit.
 
+## Solve segments
+
+Press **Shift+1** for Cross, **Shift+2–5** for F2L #1–4, **Shift+6** for OLL,
+or **Shift+7** for PLL. Press the same shortcut once at the start and again at
+the end. The **Segment** buttons do the same thing; **Cancel** discards an
+unfinished start. The segment list shows start, end, and duration. Click a
+segment in the list or its band below the timeline to seek to its start.
+Use **Edit** to change its type, start, end, or optional case label (times are seconds),
+or the trash button to delete it. Segment data is held in memory only.
+
 ## Build
 
 To build from the command line:

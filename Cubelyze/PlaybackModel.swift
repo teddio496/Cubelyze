@@ -23,6 +23,37 @@ struct VideoAnnotation: Identifiable {
     let category: AnnotationCategory
 }
 
+enum SolveSegmentType: Int, CaseIterable {
+    case cross = 1, f2l1, f2l2, f2l3, f2l4, oll, pll
+
+    var title: String {
+        switch self {
+        case .cross: return "Cross"
+        case .f2l1: return "F2L #1"
+        case .f2l2: return "F2L #2"
+        case .f2l3: return "F2L #3"
+        case .f2l4: return "F2L #4"
+        case .oll: return "OLL"
+        case .pll: return "PLL"
+        }
+    }
+}
+
+struct SolveSegment: Identifiable {
+    let id = UUID()
+    var type: SolveSegmentType
+    var start: Double
+    var end: Double
+    var caseLabel: String
+
+    var duration: Double { end - start }
+}
+
+struct PendingSegment {
+    let type: SolveSegmentType
+    let start: Double
+}
+
 @MainActor
 final class PlaybackModel: ObservableObject {
     let player = AVPlayer()
@@ -34,6 +65,9 @@ final class PlaybackModel: ObservableObject {
     @Published private(set) var speed: Float = 1
     @Published private(set) var scrubPosition: Double?
     @Published private(set) var annotations: [VideoAnnotation] = []
+    @Published private(set) var segments: [SolveSegment] = []
+    @Published private(set) var pendingSegment: PendingSegment?
+    @Published var segmentMessage: String?
     @Published var errorMessage: String?
     private var seekTarget: CMTime?
     private var isSeeking = false
@@ -76,6 +110,9 @@ final class PlaybackModel: ObservableObject {
         player.pause()
         filename = url.lastPathComponent
         annotations.removeAll()
+        segments.removeAll()
+        pendingSegment = nil
+        segmentMessage = nil
         position = 0
         duration = 0
         isReady = false
@@ -134,6 +171,51 @@ final class PlaybackModel: ObservableObject {
 
     func deleteAnnotation(_ annotation: VideoAnnotation) {
         annotations.removeAll { $0.id == annotation.id }
+    }
+
+    func markSegmentBoundary(_ type: SolveSegmentType) {
+        guard isReady else { return }
+        let time = player.currentTime().seconds
+        guard time.isFinite else { return }
+        if let pending = pendingSegment {
+            guard pending.type == type else {
+                segmentMessage = "Finish \(pending.type.title) first, or cancel its start."
+                return
+            }
+            guard time > pending.start else {
+                segmentMessage = "End time must be later than start time."
+                return
+            }
+            segments.append(SolveSegment(type: type, start: pending.start, end: time, caseLabel: ""))
+            segments.sort { $0.start < $1.start }
+            pendingSegment = nil
+            segmentMessage = nil
+        } else {
+            pendingSegment = PendingSegment(type: type, start: max(0, time))
+            segmentMessage = nil
+        }
+    }
+
+    func cancelPendingSegment() {
+        pendingSegment = nil
+        segmentMessage = nil
+    }
+
+    func updateSegment(_ segment: SolveSegment, type: SolveSegmentType, start: Double, end: Double, caseLabel: String) -> Bool {
+        guard start.isFinite, end.isFinite, start >= 0, end > start,
+              end <= duration, let index = segments.firstIndex(where: { $0.id == segment.id }) else {
+            return false
+        }
+        segments[index].type = type
+        segments[index].start = start
+        segments[index].end = end
+        segments[index].caseLabel = caseLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        segments.sort { $0.start < $1.start }
+        return true
+    }
+
+    func deleteSegment(_ segment: SolveSegment) {
+        segments.removeAll { $0.id == segment.id }
     }
 
     func stepFrame(by count: Int) {
