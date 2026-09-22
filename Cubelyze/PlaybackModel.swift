@@ -2,6 +2,27 @@ import AppKit
 import AVFoundation
 import UniformTypeIdentifiers
 
+enum AnnotationCategory: Int, CaseIterable {
+    case pause = 1, rotation, regrip, lookahead, badSolution, other
+
+    var title: String {
+        switch self {
+        case .pause: return "Pause"
+        case .rotation: return "Rotation"
+        case .regrip: return "Regrip"
+        case .lookahead: return "Lookahead"
+        case .badSolution: return "Bad solution"
+        case .other: return "Other"
+        }
+    }
+}
+
+struct VideoAnnotation: Identifiable {
+    let id = UUID()
+    let timestamp: Double
+    let category: AnnotationCategory
+}
+
 @MainActor
 final class PlaybackModel: ObservableObject {
     let player = AVPlayer()
@@ -12,6 +33,7 @@ final class PlaybackModel: ObservableObject {
     @Published private(set) var isReady = false
     @Published private(set) var speed: Float = 1
     @Published private(set) var scrubPosition: Double?
+    @Published private(set) var annotations: [VideoAnnotation] = []
     @Published var errorMessage: String?
     private var seekTarget: CMTime?
     private var isSeeking = false
@@ -53,6 +75,7 @@ final class PlaybackModel: ObservableObject {
     func open(_ url: URL) {
         player.pause()
         filename = url.lastPathComponent
+        annotations.removeAll()
         position = 0
         duration = 0
         isReady = false
@@ -99,6 +122,20 @@ final class PlaybackModel: ObservableObject {
         refresh()
     }
 
+    func addAnnotation(_ category: AnnotationCategory) {
+        guard isReady else { return }
+        // Sample the player directly; the displayed timestamp updates less frequently.
+        let timestamp = player.currentTime().seconds
+        guard timestamp.isFinite else { return }
+        let annotation = VideoAnnotation(timestamp: max(0, timestamp), category: category)
+        let index = annotations.firstIndex { $0.timestamp > annotation.timestamp } ?? annotations.endIndex
+        annotations.insert(annotation, at: index)
+    }
+
+    func deleteAnnotation(_ annotation: VideoAnnotation) {
+        annotations.removeAll { $0.id == annotation.id }
+    }
+
     func stepFrame(by count: Int) {
         guard isReady, let item = player.currentItem else { return }
         player.pause()
@@ -138,7 +175,7 @@ final class PlaybackModel: ObservableObject {
         isScrubbing = false
     }
 
-    private func seek(to seconds: Double) {
+    func seek(to seconds: Double) {
         guard isReady else { return }
         reachedEnd = false
         if !isSeeking && !isScrubbing { playAfterSeek = player.rate != 0 }

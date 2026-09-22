@@ -3,8 +3,8 @@
 A local macOS application for reviewing Rubik's Cube solve videos.
 
 Open a local video with the native file picker and review it with AVFoundation.
-Includes a click-and-drag review timeline, frame stepping, playback speeds, and
-elapsed/total time in milliseconds.
+Includes a click-and-drag review timeline, frame stepping, playback speeds,
+elapsed/total time in milliseconds, and timestamped annotations.
 Requires macOS 14 or later. Built with Swift and SwiftUI; no third-party dependencies.
 
 ## Run
@@ -23,6 +23,26 @@ press Space to toggle playback.
 
 The same controls are available below the video. Seeking stops at the beginning
 or end of the video; pressing Play after playback ends starts it again.
+
+## Annotations
+
+Press a number key or click its **Mark** button to annotate the current moment
+without pausing playback:
+
+| Key | Category |
+| --- | --- |
+| 1 | Pause |
+| 2 | Rotation |
+| 3 | Regrip |
+| 4 | Lookahead |
+| 5 | Bad solution |
+| 6 | Other |
+
+Annotations appear on the timeline and in a chronological list beside the video.
+Click a marker or list entry to seek to it; click its trash button to delete it.
+Annotations are held in memory only and cleared when you open a video or quit.
+
+## Build
 
 To build from the command line:
 

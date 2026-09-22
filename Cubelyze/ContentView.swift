@@ -15,8 +15,12 @@ struct ContentView: View {
                     .truncationMode(.middle)
                 Spacer()
             }
-            PlayerView(playback: playback)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            HStack(spacing: 12) {
+                PlayerView(playback: playback)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                AnnotationList(playback: playback)
+                    .frame(width: 240)
+            }
             ReviewTimeline(playback: playback)
             HStack {
                 Button(playback.isPlaying ? "Pause" : "Play", action: playback.togglePlayback)
@@ -49,15 +53,67 @@ struct ContentView: View {
                 }
                 .fixedSize()
             }
+            HStack {
+                Text("Mark:")
+                ForEach(AnnotationCategory.allCases, id: \.self) { category in
+                    Button("\(category.rawValue) \(category.title)") {
+                        playback.addAnnotation(category)
+                    }
+                    .help("Mark \(category.title) at the current time (\(category.rawValue))")
+                }
+                Spacer(minLength: 0)
+            }
+            .disabled(!playback.isReady)
             if let error = playback.errorMessage {
                 Text(error)
                     .foregroundStyle(.red)
             }
         }
         .padding()
-        .frame(minWidth: 720, minHeight: 320)
+        .frame(minWidth: 800, minHeight: 400)
         .onReceive(refreshTimer) { _ in playback.refresh() }
         .onDisappear { playback.player.pause() }
+    }
+}
+
+private struct AnnotationList: View {
+    @ObservedObject var playback: PlaybackModel
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text("Annotations (\(playback.annotations.count))")
+            if playback.annotations.isEmpty {
+                Text("Press 1–6 to mark the current moment.")
+                    .foregroundStyle(.secondary)
+                Spacer()
+            } else {
+                List(playback.annotations) { annotation in
+                    HStack {
+                        Button {
+                            playback.seek(to: annotation.timestamp)
+                        } label: {
+                            HStack {
+                                Text(PlaybackModel.timestamp(annotation.timestamp))
+                                    .monospacedDigit()
+                                Text(annotation.category.title)
+                                Spacer(minLength: 0)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        Button {
+                            playback.deleteAnnotation(annotation)
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Delete annotation")
+                        .accessibilityLabel("Delete \(annotation.category.title) at \(PlaybackModel.timestamp(annotation.timestamp))")
+                    }
+                }
+                .listStyle(.plain)
+            }
+        }
     }
 }
 
@@ -94,10 +150,30 @@ private struct ReviewTimeline: View {
                             playback.endScrubbing(at: min(1, max(0, value.location.x / width)) * playback.duration)
                         }
                 )
+                .overlay(alignment: .leading) {
+                    ZStack(alignment: .leading) {
+                        ForEach(playback.annotations) { annotation in
+                            let markerFraction = playback.duration > 0 ? min(1, max(0, annotation.timestamp / playback.duration)) : 0
+                            Button {
+                                playback.seek(to: annotation.timestamp)
+                            } label: {
+                                Image(systemName: "bookmark.fill")
+                                    .font(.system(size: 12))
+                                    .frame(width: 14, height: 30)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Color.accentColor)
+                            .help("\(annotation.category.title) — \(PlaybackModel.timestamp(annotation.timestamp))")
+                            .accessibilityLabel("\(annotation.category.title) at \(PlaybackModel.timestamp(annotation.timestamp))")
+                            .offset(x: min(width - 14, max(0, width * markerFraction - 7)))
+                        }
+                    }
+                }
             }
             .frame(height: 30)
             .disabled(!playback.isReady || playback.duration <= 0)
-            .accessibilityElement(children: .ignore)
+            .accessibilityElement(children: .contain)
             .accessibilityLabel("Video timeline")
             .accessibilityValue("\(PlaybackModel.timestamp(displayedPosition)) of \(PlaybackModel.timestamp(playback.duration))")
             .accessibilityAdjustableAction { direction in
@@ -156,6 +232,13 @@ private struct PlayerView: NSViewRepresentable {
                       event.window === window, window.attachedSheet == nil,
                       NSApp.modalWindow == nil else { return event }
                 let modifiers = event.modifierFlags.intersection([.shift, .control, .option, .command])
+                if modifiers.isEmpty,
+                   let characters = event.charactersIgnoringModifiers,
+                   let number = Int(characters),
+                   let category = AnnotationCategory(rawValue: number) {
+                    if !event.isARepeat { self.playback.addAnnotation(category) }
+                    return nil
+                }
                 switch (event.keyCode, modifiers) {
                 case (49, []):
                     if !event.isARepeat { self.playback.togglePlayback() }
