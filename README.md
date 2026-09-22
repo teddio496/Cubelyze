@@ -45,21 +45,17 @@ or end of the video; pressing Play after playback ends starts it again.
 ## Annotations
 
 Press a number key or click its **Events** button without pausing playback.
-Press an interval key once at its start and again at its end:
+Press **Pause** once at its start and again at its end:
 
 | Key | Category |
 | --- | --- |
-| 1 | Pause interval |
+| 1 | Pause |
 | 2 | Rotation |
 | 3 | Regrip |
-| 4 | Lookahead |
-| 5 | Bad solution |
-| 6 | Other |
-| 7 | Recognition delay interval |
-| 8 | Mistake |
+| 4 | Other |
 
-Point events appear as markers; pauses and recognition delays appear as spans
-on a separate timeline lane. Both appear in the chronological annotation list.
+Pause events appear as spans on a separate timeline lane; the other events appear
+as point markers. All appear in the chronological annotation list.
 Click a marker, span, or list entry to seek to its start; click its trash button to delete it.
 Annotations are held in memory only and cleared when you open a video or quit.
 

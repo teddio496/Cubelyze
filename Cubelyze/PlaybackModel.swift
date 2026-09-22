@@ -1,22 +1,28 @@
 import AppKit
 import AVFoundation
+import SwiftUI
 import UniformTypeIdentifiers
 
 enum AnnotationCategory: Int, CaseIterable {
-    case pause = 1, rotation, regrip, lookahead, badSolution, other, recognitionDelay, mistake
+    case pause = 1, rotation, regrip, other
 
-    var isInterval: Bool { self == .pause || self == .recognitionDelay }
+    var isInterval: Bool { self == .pause }
 
     var title: String {
         switch self {
         case .pause: return "Pause"
         case .rotation: return "Rotation"
         case .regrip: return "Regrip"
-        case .lookahead: return "Lookahead"
-        case .badSolution: return "Bad solution"
         case .other: return "Other"
-        case .recognitionDelay: return "Recognition delay"
-        case .mistake: return "Mistake"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .pause: return .orange
+        case .rotation: return .blue
+        case .regrip: return .purple
+        case .other: return .green
         }
     }
 }

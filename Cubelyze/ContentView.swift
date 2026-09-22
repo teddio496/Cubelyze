@@ -69,6 +69,9 @@ struct ContentView: View {
                     Button("\(category.rawValue) \(category.title)") {
                         playback.addAnnotation(category)
                     }
+                    .buttonStyle(.borderedProminent)
+                    .tint(category.color)
+                    .opacity(playback.pendingAnnotation?.category == category ? 0.7 : 1)
                     .help(category.isInterval
                           ? "Start/end \(category.title) (\(category.rawValue))"
                           : "Mark \(category.title) at the current time (\(category.rawValue))")
@@ -236,7 +239,7 @@ private struct AnnotationList: View {
         VStack(alignment: .leading) {
             Text("Annotations (\(playback.annotations.count))")
             if playback.annotations.isEmpty {
-                Text("Press 1 twice for a pause; 7 twice for recognition delay. Other keys mark points.")
+                Text("Press 1 twice for a pause; other keys mark points.")
                     .foregroundStyle(.secondary)
                 Spacer()
             } else {
@@ -253,6 +256,7 @@ private struct AnnotationList: View {
                                         .monospacedDigit()
                                 }
                                 Text(annotation.category.title)
+                                    .foregroundStyle(annotation.category.color)
                                 if let duration = annotation.timing.duration {
                                     Text("\(PlaybackModel.timestamp(duration))")
                                         .foregroundStyle(.secondary)
@@ -353,10 +357,11 @@ private struct ReviewTimeline: View {
                                         .lineLimit(1)
                                         .padding(.horizontal, 3)
                                         .frame(width: spanWidth, height: 26, alignment: .leading)
-                                        .background(Color.orange.opacity(0.55))
+                                        .background(annotation.category.color.opacity(0.55))
                                         .clipShape(RoundedRectangle(cornerRadius: 3))
                                 }
                                 .buttonStyle(.plain)
+                                .foregroundStyle(annotation.category.color)
                                 .help("\(annotation.category.title): \(PlaybackModel.timestamp(annotation.timing.start))–\(PlaybackModel.timestamp(end))")
                                 .offset(x: x(annotation.timing.start, width: width))
                             }
@@ -380,7 +385,7 @@ private struct ReviewTimeline: View {
                                         .frame(width: 16, height: 26)
                                 }
                                 .buttonStyle(.plain)
-                                .foregroundStyle(Color.accentColor)
+                                .foregroundStyle(annotation.category.color)
                                 .help("\(annotation.category.title) — \(PlaybackModel.timestamp(annotation.timing.start))")
                                 .offset(x: min(width - 16, max(0, x(annotation.timing.start, width: width) - 8)))
                             }
