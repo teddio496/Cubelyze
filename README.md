@@ -26,31 +26,40 @@ or end of the video; pressing Play after playback ends starts it again.
 
 ## Annotations
 
-Press a number key or click its **Mark** button to annotate the current moment
-without pausing playback:
+Press a number key or click its **Events** button without pausing playback.
+Press an interval key once at its start and again at its end:
 
 | Key | Category |
 | --- | --- |
-| 1 | Pause |
+| 1 | Pause interval |
 | 2 | Rotation |
 | 3 | Regrip |
 | 4 | Lookahead |
 | 5 | Bad solution |
 | 6 | Other |
+| 7 | Recognition delay interval |
+| 8 | Mistake |
 
-Annotations appear on the timeline and in a chronological list beside the video.
-Click a marker or list entry to seek to it; click its trash button to delete it.
+Point events appear as markers; pauses and recognition delays appear as spans
+on a separate timeline lane. Both appear in the chronological annotation list.
+Click a marker, span, or list entry to seek to its start; click its trash button to delete it.
 Annotations are held in memory only and cleared when you open a video or quit.
 
 ## Solve segments
 
-Press **Shift+1** for Cross, **Shift+2–5** for F2L #1–4, **Shift+6** for OLL,
-or **Shift+7** for PLL. Press the same shortcut once at the start and again at
-the end. The **Segment** buttons do the same thing; **Cancel** discards an
-unfinished start. The segment list shows start, end, and duration. Click a
-segment in the list or its band below the timeline to seek to its start.
-Use **Edit** to change its type, start, end, or optional case label (times are seconds),
-or the trash button to delete it. Segment data is held in memory only.
+Press **Next Segment** or **Shift+N** at the start of Cross, then again just
+after Cross is completed. Each press closes the current segment and immediately
+starts the next: F2L #1–4, OLL, then PLL. Press once more after PLL and final
+AUF to close the solve. Recognition, setup moves, pauses, and other transitions
+remain inside the active segment. There are no transition segments or gaps.
+
+The **Solve** button uses this boundary workflow. **Cancel** discards an
+unfinished boundary. The list shows start, end, and duration. Click a segment
+in the list or its timeline block to seek to its start. **Edit** moves its start
+or end boundary and updates the neighboring segment at that shared timestamp;
+it also changes the optional case label. Times are seconds. Deleting a segment
+removes it and all later segments so the remaining sequence stays continuous.
+Segment data is held in memory only.
 
 ## Build
 

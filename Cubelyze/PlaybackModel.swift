@@ -3,7 +3,9 @@ import AVFoundation
 import UniformTypeIdentifiers
 
 enum AnnotationCategory: Int, CaseIterable {
-    case pause = 1, rotation, regrip, lookahead, badSolution, other
+    case pause = 1, rotation, regrip, lookahead, badSolution, other, recognitionDelay, mistake
+
+    var isInterval: Bool { self == .pause || self == .recognitionDelay }
 
     var title: String {
         switch self {
@@ -13,13 +15,34 @@ enum AnnotationCategory: Int, CaseIterable {
         case .lookahead: return "Lookahead"
         case .badSolution: return "Bad solution"
         case .other: return "Other"
+        case .recognitionDelay: return "Recognition delay"
+        case .mistake: return "Mistake"
         }
     }
 }
 
+enum AnnotationTiming {
+    case point(Double)
+    case interval(start: Double, end: Double)
+
+    var start: Double {
+        switch self {
+        case .point(let time): return time
+        case .interval(let start, _): return start
+        }
+    }
+
+    var end: Double? {
+        if case .interval(_, let end) = self { return end }
+        return nil
+    }
+
+    var duration: Double? { end.map { $0 - start } }
+}
+
 struct VideoAnnotation: Identifiable {
     let id = UUID()
-    let timestamp: Double
+    let timing: AnnotationTiming
     let category: AnnotationCategory
 }
 
@@ -41,7 +64,7 @@ enum SolveSegmentType: Int, CaseIterable {
 
 struct SolveSegment: Identifiable {
     let id = UUID()
-    var type: SolveSegmentType
+    let type: SolveSegmentType
     var start: Double
     var end: Double
     var caseLabel: String
@@ -54,17 +77,25 @@ struct PendingSegment {
     let start: Double
 }
 
+struct PendingAnnotation {
+    let category: AnnotationCategory
+    let start: Double
+}
+
 @MainActor
 final class PlaybackModel: ObservableObject {
     let player = AVPlayer()
     @Published private(set) var filename: String?
     @Published private(set) var position: Double = 0
     @Published private(set) var duration: Double = 0
+    @Published private(set) var videoAspectRatio: CGFloat = 16.0 / 9.0
     @Published private(set) var isPlaying = false
     @Published private(set) var isReady = false
     @Published private(set) var speed: Float = 1
     @Published private(set) var scrubPosition: Double?
     @Published private(set) var annotations: [VideoAnnotation] = []
+    @Published private(set) var pendingAnnotation: PendingAnnotation?
+    @Published var annotationMessage: String?
     @Published private(set) var segments: [SolveSegment] = []
     @Published private(set) var pendingSegment: PendingSegment?
     @Published var segmentMessage: String?
@@ -110,11 +141,14 @@ final class PlaybackModel: ObservableObject {
         player.pause()
         filename = url.lastPathComponent
         annotations.removeAll()
+        pendingAnnotation = nil
+        annotationMessage = nil
         segments.removeAll()
         pendingSegment = nil
         segmentMessage = nil
         position = 0
         duration = 0
+        videoAspectRatio = 16.0 / 9.0
         isReady = false
         isPlaying = false
         errorMessage = nil
@@ -161,39 +195,62 @@ final class PlaybackModel: ObservableObject {
 
     func addAnnotation(_ category: AnnotationCategory) {
         guard isReady else { return }
-        // Sample the player directly; the displayed timestamp updates less frequently.
-        let timestamp = player.currentTime().seconds
-        guard timestamp.isFinite else { return }
-        let annotation = VideoAnnotation(timestamp: max(0, timestamp), category: category)
-        let index = annotations.firstIndex { $0.timestamp > annotation.timestamp } ?? annotations.endIndex
+        let time = player.currentTime().seconds
+        guard time.isFinite else { return }
+        let timing: AnnotationTiming
+        if category.isInterval {
+            if let pending = pendingAnnotation {
+                guard pending.category == category, time > pending.start else {
+                    annotationMessage = "Finish \(pending.category.title) after its start, or cancel it."
+                    return
+                }
+                timing = .interval(start: pending.start, end: time)
+                pendingAnnotation = nil
+            } else {
+                pendingAnnotation = PendingAnnotation(category: category, start: max(0, time))
+                annotationMessage = nil
+                return
+            }
+        } else {
+            timing = .point(max(0, time))
+        }
+        let annotation = VideoAnnotation(timing: timing, category: category)
+        let index = annotations.firstIndex { $0.timing.start > timing.start } ?? annotations.endIndex
         annotations.insert(annotation, at: index)
+        annotationMessage = nil
+    }
+
+    func cancelPendingAnnotation() {
+        pendingAnnotation = nil
+        annotationMessage = nil
     }
 
     func deleteAnnotation(_ annotation: VideoAnnotation) {
         annotations.removeAll { $0.id == annotation.id }
     }
 
-    func markSegmentBoundary(_ type: SolveSegmentType) {
+    func markNextSegmentBoundary() {
         guard isReady else { return }
         let time = player.currentTime().seconds
         guard time.isFinite else { return }
-        if let pending = pendingSegment {
-            guard pending.type == type else {
-                segmentMessage = "Finish \(pending.type.title) first, or cancel its start."
+        guard let pending = pendingSegment else {
+            if segments.last?.type == .pll {
+                segmentMessage = "The solve sequence is complete."
                 return
             }
-            guard time > pending.start else {
-                segmentMessage = "End time must be later than start time."
-                return
-            }
-            segments.append(SolveSegment(type: type, start: pending.start, end: time, caseLabel: ""))
-            segments.sort { $0.start < $1.start }
-            pendingSegment = nil
+            let expected = segments.last.flatMap { SolveSegmentType(rawValue: $0.type.rawValue + 1) } ?? .cross
+            pendingSegment = PendingSegment(type: expected, start: segments.last?.end ?? max(0, time))
             segmentMessage = nil
-        } else {
-            pendingSegment = PendingSegment(type: type, start: max(0, time))
-            segmentMessage = nil
+            return
         }
+        let next = SolveSegmentType(rawValue: pending.type.rawValue + 1)
+        guard time > pending.start else {
+            segmentMessage = "End time must be later than start time."
+            return
+        }
+        segments.append(SolveSegment(type: pending.type, start: pending.start, end: time, caseLabel: ""))
+        pendingSegment = next.map { PendingSegment(type: $0, start: time) }
+        segmentMessage = nil
     }
 
     func cancelPendingSegment() {
@@ -201,21 +258,33 @@ final class PlaybackModel: ObservableObject {
         segmentMessage = nil
     }
 
-    func updateSegment(_ segment: SolveSegment, type: SolveSegmentType, start: Double, end: Double, caseLabel: String) -> Bool {
+    func updateSegment(_ segment: SolveSegment, start: Double, end: Double, caseLabel: String) -> Bool {
         guard start.isFinite, end.isFinite, start >= 0, end > start,
               end <= duration, let index = segments.firstIndex(where: { $0.id == segment.id }) else {
             return false
         }
-        segments[index].type = type
+        guard index == 0 || start > segments[index - 1].start else { return false }
+        guard index + 1 == segments.count || end < segments[index + 1].end else { return false }
+        if index > 0 {
+            segments[index - 1].end = start
+        }
+        if index + 1 < segments.count {
+            segments[index + 1].start = end
+        } else if let pending = pendingSegment {
+            pendingSegment = PendingSegment(type: pending.type, start: end)
+        }
         segments[index].start = start
         segments[index].end = end
         segments[index].caseLabel = caseLabel.trimmingCharacters(in: .whitespacesAndNewlines)
-        segments.sort { $0.start < $1.start }
         return true
     }
 
     func deleteSegment(_ segment: SolveSegment) {
-        segments.removeAll { $0.id == segment.id }
+        guard let index = segments.firstIndex(where: { $0.id == segment.id }) else { return }
+        let restart = segments[index].start
+        segments.removeSubrange(index...)
+        pendingSegment = PendingSegment(type: segment.type, start: restart)
+        segmentMessage = "Deleted \(segment.type.title) and later segments; mark \(segment.type.title) end again."
     }
 
     func stepFrame(by count: Int) {
@@ -296,6 +365,11 @@ final class PlaybackModel: ObservableObject {
     func refresh() {
         guard let item = player.currentItem else { return }
         isReady = item.status == .readyToPlay
+        let size = item.presentationSize
+        if size.width > 0, size.height > 0 {
+            let ratio = size.width / size.height
+            if abs(videoAspectRatio - ratio) > 0.001 { videoAspectRatio = ratio }
+        }
         isPlaying = isSeeking || isScrubbing ? playAfterSeek : player.rate != 0
         let current = player.currentTime().seconds
         let total = item.duration.seconds

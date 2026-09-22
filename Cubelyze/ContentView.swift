@@ -15,18 +15,22 @@ struct ContentView: View {
                     .truncationMode(.middle)
                 Spacer()
             }
-            HStack(spacing: 12) {
-                PlayerView(playback: playback)
+            GeometryReader { row in
+                HStack(spacing: 12) {
+                    PlayerView(playback: playback)
+                        .frame(width: min(row.size.width * 0.72, row.size.height * playback.videoAspectRatio),
+                               height: row.size.height)
+                    VStack(spacing: 8) {
+                        AnnotationList(playback: playback)
+                            .frame(maxHeight: .infinity)
+                        Divider()
+                        SegmentList(playback: playback)
+                            .frame(maxHeight: .infinity)
+                    }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                VStack(spacing: 8) {
-                    AnnotationList(playback: playback)
-                        .frame(maxHeight: .infinity)
-                    Divider()
-                    SegmentList(playback: playback)
-                        .frame(maxHeight: .infinity)
                 }
-                .frame(width: 270)
             }
+            .frame(maxHeight: .infinity)
             ReviewTimeline(playback: playback)
             HStack {
                 Button(playback.isPlaying ? "Pause" : "Play", action: playback.togglePlayback)
@@ -60,24 +64,24 @@ struct ContentView: View {
                 .fixedSize()
             }
             HStack {
-                Text("Mark:")
+                Text("Events:")
                 ForEach(AnnotationCategory.allCases, id: \.self) { category in
                     Button("\(category.rawValue) \(category.title)") {
                         playback.addAnnotation(category)
                     }
-                    .help("Mark \(category.title) at the current time (\(category.rawValue))")
+                    .help(category.isInterval
+                          ? "Start/end \(category.title) (\(category.rawValue))"
+                          : "Mark \(category.title) at the current time (\(category.rawValue))")
                 }
                 Spacer(minLength: 0)
             }
             .disabled(!playback.isReady)
             HStack {
-                Text("Segment:")
-                ForEach(SolveSegmentType.allCases, id: \.self) { type in
-                    Button("\(type.rawValue) \(type.title)") {
-                        playback.markSegmentBoundary(type)
-                    }
-                    .help("Mark \(type.title) boundary (Shift+\(type.rawValue))")
+                Text("Solve:")
+                Button("Next Segment") {
+                    playback.markNextSegmentBoundary()
                 }
+                .help("Start Cross or complete the current segment (Shift+N)")
                 if playback.pendingSegment != nil {
                     Button("Cancel") { playback.cancelPendingSegment() }
                         .help("Cancel the uncompleted segment")
@@ -86,7 +90,18 @@ struct ContentView: View {
             }
             .disabled(!playback.isReady)
             if let pending = playback.pendingSegment {
-                Text("\(pending.type.title) start: \(PlaybackModel.timestamp(pending.start)) — mark its end with Shift+\(pending.type.rawValue)")
+                Text("\(pending.type.title) from \(PlaybackModel.timestamp(pending.start)) — Next Segment (Shift+N) marks completion")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if let pending = playback.pendingAnnotation {
+                HStack {
+                    Text("\(pending.category.title) from \(PlaybackModel.timestamp(pending.start)) — press \(pending.category.rawValue) again to end")
+                    Button("Cancel") { playback.cancelPendingAnnotation() }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if let message = playback.annotationMessage {
+                Text(message).foregroundStyle(.red)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             if let message = playback.segmentMessage {
@@ -100,7 +115,7 @@ struct ContentView: View {
             }
         }
         .padding()
-        .frame(minWidth: 920, minHeight: 480)
+        .frame(minWidth: 920, minHeight: 760)
         .onReceive(refreshTimer) { _ in playback.refresh() }
         .onDisappear { playback.player.pause() }
     }
@@ -114,7 +129,7 @@ private struct SegmentList: View {
         VStack(alignment: .leading) {
             Text("Segments (\(playback.segments.count))")
             if playback.segments.isEmpty {
-                Text("Press Shift+1–7 to mark a start, then the same key to mark its end.")
+                Text("Press Next Segment (Shift+N) to start Cross, then again at each completion.")
                     .foregroundStyle(.secondary)
                 Spacer()
             } else {
@@ -137,7 +152,7 @@ private struct SegmentList: View {
                                 Image(systemName: "trash")
                             }
                             .buttonStyle(.borderless)
-                            .help("Delete segment")
+                            .help("Delete this and later segments")
                         }
                         Button {
                             playback.seek(to: segment.start)
@@ -168,7 +183,6 @@ private struct SegmentEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State private var startText: String
     @State private var endText: String
-    @State private var type: SolveSegmentType
     @State private var caseLabel: String
     @State private var error: String?
 
@@ -177,7 +191,6 @@ private struct SegmentEditor: View {
         self.segment = segment
         _startText = State(initialValue: String(format: "%.3f", segment.start))
         _endText = State(initialValue: String(format: "%.3f", segment.end))
-        _type = State(initialValue: segment.type)
         _caseLabel = State(initialValue: segment.caseLabel)
     }
 
@@ -185,11 +198,8 @@ private struct SegmentEditor: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Edit \(segment.type.title)")
                 .font(.headline)
-            Picker("Type", selection: $type) {
-                ForEach(SolveSegmentType.allCases, id: \.self) { option in
-                    Text(option.title).tag(option)
-                }
-            }
+            Text("Type follows the Cross → F2L → OLL → PLL sequence.")
+                .foregroundStyle(.secondary)
             HStack {
                 Text("Start (seconds)")
                 TextField("Start", text: $startText)
@@ -205,8 +215,8 @@ private struct SegmentEditor: View {
                 Button("Cancel") { dismiss() }
                 Button("Save") {
                     guard let start = Double(startText), let end = Double(endText),
-                          playback.updateSegment(segment, type: type, start: start, end: end, caseLabel: caseLabel) else {
-                        error = "Enter times within the video, with end later than start."
+                          playback.updateSegment(segment, start: start, end: end, caseLabel: caseLabel) else {
+                        error = "Use times within the video that keep this and neighboring segments positive in duration."
                         return
                     }
                     dismiss()
@@ -226,19 +236,27 @@ private struct AnnotationList: View {
         VStack(alignment: .leading) {
             Text("Annotations (\(playback.annotations.count))")
             if playback.annotations.isEmpty {
-                Text("Press 1–6 to mark the current moment.")
+                Text("Press 1 twice for a pause; 7 twice for recognition delay. Other keys mark points.")
                     .foregroundStyle(.secondary)
                 Spacer()
             } else {
                 List(playback.annotations) { annotation in
                     HStack {
                         Button {
-                            playback.seek(to: annotation.timestamp)
+                            playback.seek(to: annotation.timing.start)
                         } label: {
                             HStack {
-                                Text(PlaybackModel.timestamp(annotation.timestamp))
+                                Text(PlaybackModel.timestamp(annotation.timing.start))
                                     .monospacedDigit()
+                                if let end = annotation.timing.end {
+                                    Text("–\(PlaybackModel.timestamp(end))")
+                                        .monospacedDigit()
+                                }
                                 Text(annotation.category.title)
+                                if let duration = annotation.timing.duration {
+                                    Text("\(PlaybackModel.timestamp(duration))")
+                                        .foregroundStyle(.secondary)
+                                }
                                 Spacer(minLength: 0)
                             }
                             .contentShape(Rectangle())
@@ -251,7 +269,7 @@ private struct AnnotationList: View {
                         }
                         .buttonStyle(.borderless)
                         .help("Delete annotation")
-                        .accessibilityLabel("Delete \(annotation.category.title) at \(PlaybackModel.timestamp(annotation.timestamp))")
+                        .accessibilityLabel("Delete \(annotation.category.title) at \(PlaybackModel.timestamp(annotation.timing.start))")
                     }
                 }
                 .listStyle(.plain)
@@ -265,25 +283,123 @@ private struct ReviewTimeline: View {
 
     private var displayedPosition: Double { playback.scrubPosition ?? playback.position }
 
+    private func x(_ time: Double, width: CGFloat) -> CGFloat {
+        guard playback.duration > 0 else { return 0 }
+        return width * min(1, max(0, time / playback.duration))
+    }
+
     var body: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: 4) {
             GeometryReader { geometry in
                 let width = max(1, geometry.size.width)
-                let fraction = playback.duration > 0 ? min(1, max(0, displayedPosition / playback.duration)) : 0
-                VStack(spacing: 2) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Solve segments")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(.secondary.opacity(0.1))
+                        ForEach(playback.segments) { segment in
+                            let blockWidth = max(2, x(segment.end, width: width) - x(segment.start, width: width))
+                            Button {
+                                playback.seek(to: segment.start)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    if blockWidth >= 48 { Text(segment.type.title).fontWeight(.medium) }
+                                    if blockWidth >= 105 {
+                                        Text(PlaybackModel.timestamp(segment.duration))
+                                            .monospacedDigit()
+                                    }
+                                }
+                                .font(.caption)
+                                .lineLimit(1)
+                                .padding(.horizontal, 5)
+                                .frame(width: blockWidth, height: 56, alignment: .leading)
+                                .background(Color.blue.opacity(0.3))
+                                .clipShape(RoundedRectangle(cornerRadius: 3))
+                            }
+                            .buttonStyle(.plain)
+                            .help("\(segment.type.title): \(PlaybackModel.timestamp(segment.start))–\(PlaybackModel.timestamp(segment.end))")
+                            .accessibilityLabel("\(segment.type.title), \(PlaybackModel.timestamp(segment.duration)); seek to start")
+                            .offset(x: x(segment.start, width: width))
+                        }
+                        if let pending = playback.pendingSegment, displayedPosition > pending.start {
+                            Text(pending.type.title)
+                                .font(.caption)
+                                .padding(.horizontal, 5)
+                                .frame(width: max(2, x(displayedPosition, width: width) - x(pending.start, width: width)), height: 56, alignment: .leading)
+                                .background(Color.blue.opacity(0.12))
+                                .clipShape(RoundedRectangle(cornerRadius: 3))
+                                .offset(x: x(pending.start, width: width))
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .frame(width: width, height: 56)
+
+                    Text("Duration annotations")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(.secondary.opacity(0.1))
+                        ForEach(playback.annotations) { annotation in
+                            if let end = annotation.timing.end {
+                                let spanWidth = max(3, x(end, width: width) - x(annotation.timing.start, width: width))
+                                Button {
+                                    playback.seek(to: annotation.timing.start)
+                                } label: {
+                                    Text(spanWidth >= 75 ? annotation.category.title : "")
+                                        .font(.caption)
+                                        .lineLimit(1)
+                                        .padding(.horizontal, 3)
+                                        .frame(width: spanWidth, height: 26, alignment: .leading)
+                                        .background(Color.orange.opacity(0.55))
+                                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                                }
+                                .buttonStyle(.plain)
+                                .help("\(annotation.category.title): \(PlaybackModel.timestamp(annotation.timing.start))–\(PlaybackModel.timestamp(end))")
+                                .offset(x: x(annotation.timing.start, width: width))
+                            }
+                        }
+                    }
+                    .frame(width: width, height: 26)
+
+                    Text("Point events")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(.secondary.opacity(0.1))
+                        ForEach(playback.annotations) { annotation in
+                            if annotation.timing.end == nil {
+                                Button {
+                                    playback.seek(to: annotation.timing.start)
+                                } label: {
+                                    Image(systemName: "bookmark.fill")
+                                        .font(.system(size: 12))
+                                        .frame(width: 16, height: 26)
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(Color.accentColor)
+                                .help("\(annotation.category.title) — \(PlaybackModel.timestamp(annotation.timing.start))")
+                                .offset(x: min(width - 16, max(0, x(annotation.timing.start, width: width) - 8)))
+                            }
+                        }
+                    }
+                    .frame(width: width, height: 26)
+
+                    Text("Playback")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     ZStack(alignment: .leading) {
                         Capsule()
                             .fill(.secondary.opacity(0.25))
-                            .frame(height: 6)
+                            .frame(height: 8)
                         Capsule()
                             .fill(Color.accentColor)
-                            .frame(width: width * fraction, height: 6)
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(Color.primary)
-                            .frame(width: 3, height: 22)
-                            .offset(x: min(width - 3, max(0, width * fraction - 1.5)))
+                            .frame(width: x(displayedPosition, width: width), height: 8)
                     }
-                    .frame(width: width, height: 30)
+                    .frame(width: width, height: 32)
                     .contentShape(Rectangle())
                     .gesture(
                         DragGesture(minimumDistance: 0)
@@ -294,47 +410,16 @@ private struct ReviewTimeline: View {
                                 playback.endScrubbing(at: min(1, max(0, value.location.x / width)) * playback.duration)
                             }
                     )
-                    .overlay(alignment: .leading) {
-                        ZStack(alignment: .leading) {
-                            ForEach(playback.annotations) { annotation in
-                                let markerFraction = playback.duration > 0 ? min(1, max(0, annotation.timestamp / playback.duration)) : 0
-                                Button {
-                                    playback.seek(to: annotation.timestamp)
-                                } label: {
-                                    Image(systemName: "bookmark.fill")
-                                        .font(.system(size: 12))
-                                        .frame(width: 14, height: 30)
-                                        .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(Color.accentColor)
-                                .help("\(annotation.category.title) — \(PlaybackModel.timestamp(annotation.timestamp))")
-                                .accessibilityLabel("\(annotation.category.title) at \(PlaybackModel.timestamp(annotation.timestamp))")
-                                .offset(x: min(width - 14, max(0, width * markerFraction - 7)))
-                            }
-                        }
-                    }
-                    ZStack(alignment: .leading) {
-                        ForEach(playback.segments) { segment in
-                            let start = playback.duration > 0 ? segment.start / playback.duration : 0
-                            let length = playback.duration > 0 ? segment.duration / playback.duration : 0
-                            Button {
-                                playback.seek(to: segment.start)
-                            } label: {
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(Color.blue.opacity(0.65))
-                                    .frame(width: max(2, width * length), height: 14)
-                            }
-                            .buttonStyle(.plain)
-                            .help("\(segment.type.title) \(PlaybackModel.timestamp(segment.start))–\(PlaybackModel.timestamp(segment.end))\(segment.caseLabel.isEmpty ? "" : " — \(segment.caseLabel)")")
-                            .accessibilityLabel("\(segment.type.title) segment, \(PlaybackModel.timestamp(segment.start)) to \(PlaybackModel.timestamp(segment.end))")
-                            .offset(x: min(width - 2, max(0, width * start)))
-                        }
-                    }
-                    .frame(width: width, height: 16)
+                }
+                .overlay(alignment: .topLeading) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.primary)
+                        .frame(width: 3, height: 205)
+                        .offset(x: min(width - 3, max(0, x(displayedPosition, width: width) - 1.5)), y: 19)
+                        .allowsHitTesting(false)
                 }
             }
-            .frame(height: 48)
+            .frame(height: 250)
             .disabled(!playback.isReady || playback.duration <= 0)
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Video timeline")
@@ -395,9 +480,8 @@ private struct PlayerView: NSViewRepresentable {
                       event.window === window, window.attachedSheet == nil,
                       NSApp.modalWindow == nil else { return event }
                 let modifiers = event.modifierFlags.intersection([.shift, .control, .option, .command])
-                if modifiers == .shift, let index = [18, 19, 20, 21, 23, 22, 26].firstIndex(of: Int(event.keyCode)),
-                   let type = SolveSegmentType(rawValue: index + 1) {
-                    if !event.isARepeat { self.playback.markSegmentBoundary(type) }
+                if modifiers == .shift, event.keyCode == 45 {
+                    if !event.isARepeat { self.playback.markNextSegmentBoundary() }
                     return nil
                 }
                 if modifiers.isEmpty,

@@ -6,6 +6,6 @@ struct CubelyzeApp: App {
         Window("Cubelyze", id: "main") {
             ContentView()
         }
-        .defaultSize(width: 900, height: 600)
+        .defaultSize(width: 1200, height: 850)
     }
 }
