@@ -3,91 +3,6 @@ import AVFoundation
 import SwiftUI
 import UniformTypeIdentifiers
 
-enum AnnotationCategory: Int, CaseIterable {
-    case pause = 1, rotation, regrip, other
-
-    var isInterval: Bool { self == .pause }
-
-    var title: String {
-        switch self {
-        case .pause: return "Pause"
-        case .rotation: return "Rotation"
-        case .regrip: return "Regrip"
-        case .other: return "Other"
-        }
-    }
-
-    var color: Color {
-        switch self {
-        case .pause: return .orange
-        case .rotation: return .blue
-        case .regrip: return .purple
-        case .other: return .green
-        }
-    }
-}
-
-enum AnnotationTiming {
-    case point(Double)
-    case interval(start: Double, end: Double)
-
-    var start: Double {
-        switch self {
-        case .point(let time): return time
-        case .interval(let start, _): return start
-        }
-    }
-
-    var end: Double? {
-        if case .interval(_, let end) = self { return end }
-        return nil
-    }
-
-    var duration: Double? { end.map { $0 - start } }
-}
-
-struct VideoAnnotation: Identifiable {
-    let id = UUID()
-    let timing: AnnotationTiming
-    let category: AnnotationCategory
-}
-
-enum SolveSegmentType: Int, CaseIterable {
-    case cross = 1, f2l1, f2l2, f2l3, f2l4, oll, pll
-
-    var title: String {
-        switch self {
-        case .cross: return "Cross"
-        case .f2l1: return "F2L #1"
-        case .f2l2: return "F2L #2"
-        case .f2l3: return "F2L #3"
-        case .f2l4: return "F2L #4"
-        case .oll: return "OLL"
-        case .pll: return "PLL"
-        }
-    }
-}
-
-struct SolveSegment: Identifiable {
-    let id = UUID()
-    let type: SolveSegmentType
-    var start: Double
-    var end: Double
-    var caseLabel: String
-
-    var duration: Double { end - start }
-}
-
-struct PendingSegment {
-    let type: SolveSegmentType
-    let start: Double
-}
-
-struct PendingAnnotation {
-    let category: AnnotationCategory
-    let start: Double
-}
-
 @MainActor
 final class PlaybackModel: ObservableObject {
     let player = AVPlayer()
@@ -100,12 +15,15 @@ final class PlaybackModel: ObservableObject {
     @Published private(set) var speed: Float = 1
     @Published private(set) var scrubPosition: Double?
     @Published private(set) var annotations: [VideoAnnotation] = []
+    @Published var selectedAnnotationID: UUID?
     @Published private(set) var pendingAnnotation: PendingAnnotation?
     @Published var annotationMessage: String?
     @Published private(set) var segments: [SolveSegment] = []
+    @Published var selectedSegmentID: UUID?
     @Published private(set) var pendingSegment: PendingSegment?
     @Published var segmentMessage: String?
     @Published var errorMessage: String?
+    @Published private(set) var saveMessage: String?
     private var seekTarget: CMTime?
     private var isSeeking = false
     private var pendingSteps = 0
@@ -113,6 +31,14 @@ final class PlaybackModel: ObservableObject {
     private var playAfterSeek = false
     private var reachedEnd = false
     private var endObserver: NSObjectProtocol?
+    private var terminationObserver: NSObjectProtocol?
+    private var saveTask: Task<Void, Never>?
+    private var projectURL: URL?
+    private var videoURL: URL?
+    private var scopedVideoURL: URL?
+    private var recoveryDocument: AnalysisDocument?
+    private var recoveryProjectURL: URL?
+    private let analysisStore = AnalysisStore()
 
     init() {
         endObserver = NotificationCenter.default.addObserver(
@@ -125,10 +51,19 @@ final class PlaybackModel: ObservableObject {
                 self.refresh()
             }
         }
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.saveNow() }
+        }
+        restoreLastProject()
     }
 
     deinit {
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+        if let terminationObserver { NotificationCenter.default.removeObserver(terminationObserver) }
+        saveTask?.cancel()
+        scopedVideoURL?.stopAccessingSecurityScopedResource()
     }
 
     func chooseVideo() {
@@ -144,13 +79,40 @@ final class PlaybackModel: ObservableObject {
     }
 
     func open(_ url: URL) {
+        let standardizedURL = url.standardizedFileURL
+        if let recoveryDocument,
+           URL(fileURLWithPath: recoveryDocument.videoPath).lastPathComponent == standardizedURL.lastPathComponent {
+            let destination = recoveryProjectURL ?? projectFileURL(for: standardizedURL)
+            self.recoveryDocument = nil
+            recoveryProjectURL = nil
+            openVideo(standardizedURL, restoring: recoveryDocument, projectURL: destination)
+            return
+        }
+        let destination = projectFileURL(for: standardizedURL)
+        if let document = analysisStore.savedDocument(for: destination) {
+            openVideo(standardizedURL, restoring: document, projectURL: destination)
+            return
+        }
+        openVideo(standardizedURL, restoring: nil, projectURL: destination)
+    }
+
+    private func openVideo(_ url: URL, restoring document: AnalysisDocument?, projectURL: URL) {
+        saveTask?.cancel()
+        saveNow()
         player.pause()
+        scopedVideoURL?.stopAccessingSecurityScopedResource()
+        if url.startAccessingSecurityScopedResource() { scopedVideoURL = url } else { scopedVideoURL = nil }
+        videoURL = url
+        self.projectURL = projectURL
+        analysisStore.remember(projectURL: projectURL)
         filename = url.lastPathComponent
-        annotations.removeAll()
+        annotations = document?.annotations ?? []
+        selectedAnnotationID = nil
         pendingAnnotation = nil
         annotationMessage = nil
-        segments.removeAll()
-        pendingSegment = nil
+        segments = document?.segments ?? []
+        selectedSegmentID = nil
+        pendingSegment = document?.pendingSegment
         segmentMessage = nil
         position = 0
         duration = 0
@@ -167,6 +129,7 @@ final class PlaybackModel: ObservableObject {
         reachedEnd = false
         player.replaceCurrentItem(with: AVPlayerItem(url: url))
         player.play()
+        scheduleSave()
     }
 
     func togglePlayback() {
@@ -215,6 +178,7 @@ final class PlaybackModel: ObservableObject {
             } else {
                 pendingAnnotation = PendingAnnotation(category: category, start: max(0, time))
                 annotationMessage = nil
+                scheduleSave()
                 return
             }
         } else {
@@ -224,15 +188,32 @@ final class PlaybackModel: ObservableObject {
         let index = annotations.firstIndex { $0.timing.start > timing.start } ?? annotations.endIndex
         annotations.insert(annotation, at: index)
         annotationMessage = nil
+        selectedAnnotationID = annotation.id
+        scheduleSave()
     }
 
     func cancelPendingAnnotation() {
         pendingAnnotation = nil
         annotationMessage = nil
+        scheduleSave()
     }
 
     func deleteAnnotation(_ annotation: VideoAnnotation) {
         annotations.removeAll { $0.id == annotation.id }
+        if selectedAnnotationID == annotation.id { selectedAnnotationID = nil }
+        scheduleSave()
+    }
+
+    func selectAnnotation(_ annotation: VideoAnnotation, seek: Bool = true) {
+        selectedAnnotationID = annotation.id
+        selectedSegmentID = nil
+        if seek { self.seek(to: annotation.timing.start) }
+    }
+
+    func updateAnnotationNote(id: UUID, note: String) {
+        guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
+        annotations[index].note = note
+        scheduleSave()
     }
 
     func markNextSegmentBoundary() {
@@ -247,6 +228,7 @@ final class PlaybackModel: ObservableObject {
             let expected = segments.last.flatMap { SolveSegmentType(rawValue: $0.type.rawValue + 1) } ?? .cross
             pendingSegment = PendingSegment(type: expected, start: segments.last?.end ?? max(0, time))
             segmentMessage = nil
+            scheduleSave()
             return
         }
         let next = SolveSegmentType(rawValue: pending.type.rawValue + 1)
@@ -257,11 +239,13 @@ final class PlaybackModel: ObservableObject {
         segments.append(SolveSegment(type: pending.type, start: pending.start, end: time, caseLabel: ""))
         pendingSegment = next.map { PendingSegment(type: $0, start: time) }
         segmentMessage = nil
+        scheduleSave()
     }
 
     func cancelPendingSegment() {
         pendingSegment = nil
         segmentMessage = nil
+        scheduleSave()
     }
 
     func updateSegment(_ segment: SolveSegment, start: Double, end: Double, caseLabel: String) -> Bool {
@@ -282,6 +266,7 @@ final class PlaybackModel: ObservableObject {
         segments[index].start = start
         segments[index].end = end
         segments[index].caseLabel = caseLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        scheduleSave()
         return true
     }
 
@@ -289,8 +274,80 @@ final class PlaybackModel: ObservableObject {
         guard let index = segments.firstIndex(where: { $0.id == segment.id }) else { return }
         let restart = segments[index].start
         segments.removeSubrange(index...)
+        if selectedSegmentID == segment.id { selectedSegmentID = nil }
         pendingSegment = PendingSegment(type: segment.type, start: restart)
         segmentMessage = "Deleted \(segment.type.title) and later segments; mark \(segment.type.title) end again."
+        scheduleSave()
+    }
+
+    var selectedAnnotation: VideoAnnotation? {
+        annotations.first { $0.id == selectedAnnotationID }
+    }
+
+    var selectedSegment: SolveSegment? {
+        segments.first { $0.id == selectedSegmentID }
+    }
+
+    func selectSegment(_ segment: SolveSegment) {
+        selectedSegmentID = segment.id
+        selectedAnnotationID = nil
+        seek(to: segment.start)
+    }
+
+    func clearSelection() {
+        selectedAnnotationID = nil
+        selectedSegmentID = nil
+    }
+
+    var analyzedDuration: Double {
+        guard let first = segments.first, let last = segments.last else { return 0 }
+        return max(0, last.end - first.start)
+    }
+
+    var pauseAnnotations: [VideoAnnotation] { annotations.filter { $0.category == .pause } }
+    var totalPauseTime: Double { pauseAnnotations.compactMap(\.timing.duration).reduce(0, +) }
+    var longestPause: VideoAnnotation? { pauseAnnotations.max { ($0.timing.duration ?? 0) < ($1.timing.duration ?? 0) } }
+    func eventCount(_ category: AnnotationCategory) -> Int { annotations.filter { $0.category == category }.count }
+
+    private func projectFileURL(for videoURL: URL) -> URL { analysisStore.projectURL(for: videoURL) }
+
+    private func scheduleSave() {
+        guard projectURL != nil, videoURL != nil else { return }
+        saveTask?.cancel()
+        saveTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            self?.saveNow()
+        }
+    }
+
+    private func saveNow() {
+        guard let projectURL, let videoURL else { return }
+        do {
+            let bookmark = analysisStore.bookmark(for: videoURL)
+            let document = AnalysisDocument(schemaVersion: 1, videoPath: videoURL.path,
+                                            videoBookmark: bookmark, segments: segments,
+                                            pendingSegment: pendingSegment, annotations: annotations)
+            try analysisStore.save(document: document, to: projectURL)
+            saveMessage = nil
+        } catch {
+            saveMessage = "Could not save analysis: \(error.localizedDescription)"
+        }
+    }
+
+    private func restoreLastProject() {
+        guard let saved = analysisStore.lastProject() else { return }
+        let savedURL = saved.url
+        let document = saved.document
+        let candidate = analysisStore.resolveVideoURL(for: document).url!
+        guard FileManager.default.fileExists(atPath: candidate.path) else {
+            errorMessage = "The saved video is missing or was moved. Use Open Video… to locate it."
+            filename = URL(fileURLWithPath: document.videoPath).lastPathComponent
+            recoveryDocument = document
+            recoveryProjectURL = savedURL
+            return
+        }
+        openVideo(candidate, restoring: document, projectURL: savedURL)
     }
 
     func stepFrame(by count: Int) {
