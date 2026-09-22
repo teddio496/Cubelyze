@@ -7,6 +7,24 @@ Includes a click-and-drag review timeline, frame stepping, playback speeds,
 elapsed/total time in milliseconds, and timestamped annotations.
 Requires macOS 14 or later. Built with Swift and SwiftUI; no third-party dependencies.
 
+## Requirements
+
+- macOS 14 or later
+- Xcode Command Line Tools, including the Swift compiler and macOS SDK
+- A macOS-supported `.mov` or `.mp4` video codec for testing
+
+Xcode is optional. Install it if you want to open the project in Xcode, use the
+Xcode debugger, or build with `xcodebuild`. The command-line build script works
+with the standalone Xcode Command Line Tools:
+
+```sh
+xcode-select --install
+```
+
+There are no Swift Package Manager, CocoaPods, Homebrew, or other third-party
+dependencies to install. The app currently has no automated test suite; the
+build commands below are the available build checks.
+
 ## Run
 
 Open `Cubelyze.xcodeproj` in Xcode, select the Cubelyze scheme and My Mac,
@@ -63,7 +81,7 @@ Segment data is held in memory only.
 
 ## Build
 
-To build from the command line:
+If Xcode is installed, build from the command line with:
 
 ```sh
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
