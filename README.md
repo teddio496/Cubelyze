@@ -57,7 +57,15 @@ Press **Pause** once at its start and again at its end:
 Pause events appear as spans on a separate timeline lane; the other events appear
 as point markers. All appear in the chronological annotation list.
 Click a marker, span, or list entry to seek to its start; click its trash button to delete it.
-Annotations are held in memory only and cleared when you open a video or quit.
+Select an event from its timeline marker/span or the annotation list to edit an
+optional note or delete it. Analyses autosave as human-readable JSON in
+`~/Library/Application Support/Cubelyze/Projects` and restore when the same video
+or the last project is reopened. The JSON stores a security-scoped bookmark for
+persistent video access; the original video is never modified.
+
+The statistics strip summarizes analyzed solve and phase durations, pause time,
+pause count and longest pause, plus Rotation, Regrip, and Other counts. Click the
+longest pause to select it and seek to its start.
 
 ## Solve segments
 
@@ -73,7 +81,6 @@ in the list or its timeline block to seek to its start. **Edit** moves its start
 or end boundary and updates the neighboring segment at that shared timestamp;
 it also changes the optional case label. Times are seconds. Deleting a segment
 removes it and all later segments so the remaining sequence stays continuous.
-Segment data is held in memory only.
 
 ## Build
 
@@ -107,7 +114,7 @@ otherwise macOS Gatekeeper may warn users.
 
 - macOS 14 or later is required.
 - Video support is limited to codecs supported by AVFoundation on the user's Mac.
-- There is no in-app export or sharing workflow yet.
+- Analyses autosave locally, but there is no in-app export or sharing workflow yet.
 - There is no automated test suite yet; builds and affected workflows must be
   verified manually.
 - Release archives produced by the included script are not notarized.
