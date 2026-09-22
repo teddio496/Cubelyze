@@ -93,4 +93,29 @@ sh scripts/build.sh
 open build/Cubelyze.app
 ```
 
+To create a versioned ZIP for a GitHub release:
+
+```sh
+sh scripts/package-release.sh 0.1.0
+```
+
+The resulting archive is ad-hoc signed for development. Public binaries should
+be signed with a Developer ID certificate and notarized by Apple before release;
+otherwise macOS Gatekeeper may warn users.
+
+## Current limitations
+
+- macOS 14 or later is required.
+- Video support is limited to codecs supported by AVFoundation on the user's Mac.
+- There is no in-app export or sharing workflow yet.
+- There is no automated test suite yet; builds and affected workflows must be
+  verified manually.
+- Release archives produced by the included script are not notarized.
+
+## Contributing
+
+Issues and focused pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md)
+for setup and verification guidance. Security issues should be reported according
+to [SECURITY.md](SECURITY.md).
+
 Licensed under the MIT License.
