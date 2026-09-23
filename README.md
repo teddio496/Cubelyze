@@ -47,6 +47,10 @@ press Space to toggle playback.
 The same controls are available below the video. Seeking stops at the beginning
 or end of the video; pressing Play after playback ends starts it again.
 
+The **Overlay** switch (or ⌘⇧H) shows the current phase and active Pause directly
+on the video. Point events appear only while the playhead is near their timestamp.
+The switch remembers its setting between launches and does not change the analysis.
+
 ## Annotations
 
 Press a number key or click its **Events** button without pausing playback.
