@@ -317,6 +317,7 @@ private struct AnalysisInspector: View {
 private struct EventDetails: View {
     @ObservedObject var playback: PlaybackModel
     let annotation: VideoAnnotation
+    @State private var edgeError: String?
 
     private var note: Binding<String> {
         Binding(get: { playback.annotations.first(where: { $0.id == annotation.id })?.note ?? "" },
@@ -331,6 +332,13 @@ private struct EventDetails: View {
                 InspectorValue(label: "Start", value: PlaybackModel.timestamp(annotation.timing.start))
                 InspectorValue(label: "End", value: PlaybackModel.timestamp(end))
                 InspectorValue(label: "Duration", value: PlaybackModel.timestamp(end - annotation.timing.start))
+                HStack {
+                    Button("Start ← playhead") { placeEdge(start: true) }
+                    Button("End ← playhead") { placeEdge(start: false) }
+                }
+                .disabled(!playback.isReady)
+                .controlSize(.small)
+                if let edgeError { Text(edgeError).font(.caption).foregroundStyle(.red) }
             } else {
                 InspectorValue(label: "Time", value: PlaybackModel.timestamp(annotation.timing.start))
             }
@@ -340,12 +348,18 @@ private struct EventDetails: View {
             Button("Delete Event", role: .destructive) { playback.deleteAnnotation(annotation) }
         }
     }
+
+    private func placeEdge(start: Bool) {
+        edgeError = playback.placeAnnotationEdgeAtPlayhead(id: annotation.id, startEdge: start)
+            ? nil : "Step to a frame inside the valid range first."
+    }
 }
 
 private struct SegmentDetails: View {
     @ObservedObject var playback: PlaybackModel
     let segment: SolveSegment
     let edit: () -> Void
+    @State private var edgeError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -356,10 +370,22 @@ private struct SegmentDetails: View {
             InspectorValue(label: "Duration", value: PlaybackModel.timestamp(segment.duration))
             if !segment.caseLabel.isEmpty { InspectorValue(label: "Case", value: segment.caseLabel) }
             HStack {
+                Button("Start ← playhead") { placeEdge(start: true) }
+                Button("End ← playhead") { placeEdge(start: false) }
+            }
+            .disabled(!playback.isReady)
+            .controlSize(.small)
+            if let edgeError { Text(edgeError).font(.caption).foregroundStyle(.red) }
+            HStack {
                 Button("Edit", action: edit)
                 Button("Delete", role: .destructive) { playback.deleteSegment(segment) }
             }
         }
+    }
+
+    private func placeEdge(start: Bool) {
+        edgeError = playback.placeSegmentEdgeAtPlayhead(id: segment.id, startEdge: start)
+            ? nil : "Step to a frame inside the valid range first."
     }
 }
 
@@ -490,6 +516,11 @@ private struct ReviewTimeline: View {
                             .accessibilityLabel("\(segment.type.title), \(PlaybackModel.timestamp(segment.duration)); seek to start")
                             .offset(x: x(segment.start, width: width))
                         }
+                        ForEach(playback.segments.dropFirst()) { segment in
+                            TimelineSegmentBoundary(playback: playback, right: segment,
+                                                    timelineWidth: width)
+                                .offset(x: x(segment.start, width: width) - 9)
+                        }
                         if let pending = playback.pendingSegment, displayedPosition > pending.start {
                             Text(pending.type.title)
                                 .font(.caption)
@@ -512,26 +543,10 @@ private struct ReviewTimeline: View {
                         ForEach(playback.annotations) { annotation in
                             if let end = annotation.timing.end {
                                 let spanWidth = max(3, x(end, width: width) - x(annotation.timing.start, width: width))
-                                Button {
-                                    playback.selectAnnotation(annotation)
-                                } label: {
-                                    Text(spanWidth >= 75 ? annotation.category.title : "")
-                                        .font(.caption)
-                                        .lineLimit(1)
-                                        .padding(.horizontal, 3)
-                                        .frame(width: spanWidth, height: 26, alignment: .leading)
-                                        .background(annotation.category.color.opacity(0.55))
-                                        .clipShape(RoundedRectangle(cornerRadius: 3))
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(annotation.category.color)
-                                .overlay {
-                                    if playback.selectedAnnotationID == annotation.id {
-                                        RoundedRectangle(cornerRadius: 3).stroke(.primary, lineWidth: 2)
-                                    }
-                                }
+                                TimelineIntervalBar(playback: playback, annotation: annotation,
+                                                    spanWidth: spanWidth, timelineWidth: width)
                                 .help("\(annotation.category.title): \(PlaybackModel.timestamp(annotation.timing.start))–\(PlaybackModel.timestamp(end))")
-                                .offset(x: x(annotation.timing.start, width: width))
+                                .offset(x: x(annotation.timing.start, width: width) - 9)
                             }
                         }
                     }

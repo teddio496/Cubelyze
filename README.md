@@ -66,6 +66,9 @@ Press **Pause** once at its start and again at its end:
 Pause events appear as spans on a separate timeline lane; the other events appear
 as point markers. All appear in the chronological annotation list.
 Click a marker, span, or list entry to seek to its start; click its trash button to delete it.
+Hover or select a duration span to reveal its edge handles. Drag an edge to resize
+the interval, or drag the span to move it without changing its duration. The
+drag readout shows the updated times; edits are clamped to the video.
 Select an event from its timeline marker/span or the annotation list to edit an
 optional note or delete it. Each solve autosaves as human-readable JSON in
 `~/Library/Application Support/Cubelyze/Solves` and appears in the library when
@@ -96,6 +99,10 @@ in the list or its timeline block to seek to its start. **Edit** moves its start
 or end boundary and updates the neighboring segment at that shared timestamp;
 it also changes the optional case label. Times are seconds. Deleting a segment
 removes it and all later segments so the remaining sequence stays continuous.
+Hover the divider between two completed segments and drag it to adjust their
+shared boundary. Both phase durations update together. To place an interval or
+segment edge on an exact frame, step the video to that frame and use **Start ←
+playhead** or **End ← playhead** in the inspector.
 
 ## Build
 
