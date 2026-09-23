@@ -27,6 +27,10 @@ final class PlaybackModel: ObservableObject {
     @Published private(set) var solves: [Solve] = []
     @Published private(set) var selectedSolveID: UUID?
     @Published private(set) var importMessage: String?
+    @Published var showsAnalysisOverlay: Bool =
+        UserDefaults.standard.object(forKey: "ShowsAnalysisOverlay") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showsAnalysisOverlay, forKey: "ShowsAnalysisOverlay") }
+    }
     private var seekTarget: CMTime?
     private var isSeeking = false
     private var pendingSteps = 0
@@ -388,6 +392,32 @@ final class PlaybackModel: ObservableObject {
     var totalPauseTime: Double { pauseAnnotations.compactMap(\.timing.duration).reduce(0, +) }
     var longestPause: VideoAnnotation? { pauseAnnotations.max { ($0.timing.duration ?? 0) < ($1.timing.duration ?? 0) } }
     func eventCount(_ category: AnnotationCategory) -> Int { annotations.filter { $0.category == category }.count }
+
+    var overlayTime: Double { scrubPosition ?? position }
+
+    var overlaySegmentType: SolveSegmentType? {
+        let time = overlayTime
+        if let segment = segments.first(where: { $0.start <= time && time < $0.end }) {
+            return segment.type
+        }
+        if let pendingSegment, pendingSegment.start <= time { return pendingSegment.type }
+        return nil
+    }
+
+    var overlayIntervals: [VideoAnnotation] {
+        let time = overlayTime
+        return annotations.filter {
+            guard let end = $0.timing.end else { return false }
+            return $0.timing.start <= time && time < end
+        }
+    }
+
+    var overlayPointEvents: [VideoAnnotation] {
+        let time = overlayTime
+        return annotations.filter {
+            $0.timing.end == nil && abs($0.timing.start - time) <= 0.15
+        }
+    }
 
     private func scheduleSave() {
         guard selectedSolveID != nil else { return }

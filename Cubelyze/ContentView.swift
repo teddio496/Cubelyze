@@ -28,11 +28,15 @@ struct ContentView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
+                Toggle("Overlay", isOn: $playback.showsAnalysisOverlay)
+                    .toggleStyle(.switch)
+                    .fixedSize()
+                    .help("Show analysis overlay (⌘⇧H)")
             }
             GeometryReader { workspace in
                 HStack(spacing: 14) {
                     VStack(spacing: 10) {
-                        PlayerView(playback: playback)
+                        AnalysisVideoView(playback: playback)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .layoutPriority(1)
                         ReviewTimeline(playback: playback)
@@ -133,6 +137,84 @@ private struct SolveLibrary: View {
             Task { await playback.importVideos(files) }
             return true
         }
+    }
+}
+
+private struct AnalysisVideoView: View {
+    @ObservedObject var playback: PlaybackModel
+
+    var body: some View {
+        GeometryReader { geometry in
+            let videoWidth = min(geometry.size.width,
+                                 geometry.size.height * playback.videoAspectRatio)
+            let videoHeight = videoWidth / playback.videoAspectRatio
+            ZStack {
+                PlayerView(playback: playback)
+                if playback.showsAnalysisOverlay && playback.isReady {
+                    AnalysisOverlay(playback: playback)
+                        .frame(maxWidth: min(240, videoWidth * 0.4), alignment: .leading)
+                        .padding(12)
+                        .frame(width: videoWidth, height: videoHeight, alignment: .topLeading)
+                        .allowsHitTesting(false)
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+        }
+    }
+}
+
+private struct AnalysisOverlay: View {
+    @ObservedObject var playback: PlaybackModel
+
+    private var hasContent: Bool {
+        playback.overlaySegmentType != nil || !playback.overlayIntervals.isEmpty ||
+        (playback.pendingAnnotation.map { $0.start <= playback.overlayTime } ?? false) ||
+        !playback.overlayPointEvents.isEmpty
+    }
+
+    var body: some View {
+        Group {
+            if hasContent {
+                VStack(alignment: .leading, spacing: 5) {
+                    if let phase = playback.overlaySegmentType {
+                        Text(phase.title).font(.headline)
+                    }
+                    ForEach(playback.overlayIntervals) { annotation in
+                        eventLine(annotation.category,
+                                  elapsed: playback.overlayTime - annotation.timing.start)
+                    }
+                    if let pending = playback.pendingAnnotation,
+                       pending.start <= playback.overlayTime {
+                        eventLine(pending.category,
+                                  elapsed: playback.overlayTime - pending.start)
+                    }
+                    ForEach(playback.overlayPointEvents) { annotation in
+                        eventLine(annotation.category, elapsed: nil)
+                    }
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 8)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 9)
+                        .strokeBorder(.white.opacity(0.15), lineWidth: 1)
+                }
+                .shadow(radius: 5)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func eventLine(_ category: AnnotationCategory, elapsed: Double?) -> some View {
+        HStack(spacing: 6) {
+            Circle().fill(category.color).frame(width: 6, height: 6)
+            Text(category.title)
+            if let elapsed {
+                Text("· \(elapsed, specifier: "%.2f")s")
+                    .monospacedDigit()
+            }
+        }
+        .font(.caption)
     }
 }
 
@@ -587,6 +669,8 @@ private struct PlayerView: NSViewRepresentable {
                     return nil
                 }
                 switch (event.keyCode, modifiers) {
+                case (4, [.command, .shift]):
+                    if !event.isARepeat { self.playback.showsAnalysisOverlay.toggle() }
                 case (49, []):
                     if !event.isARepeat { self.playback.togglePlayback() }
                 case (123, []): self.playback.stepFrame(by: -1)
