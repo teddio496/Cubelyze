@@ -79,12 +79,14 @@ struct Solve: Identifiable, Codable {
     var recordedAt: Date
     let importedAt: Date
     var scramble: String?
+    var trimmedAt: Date?
     var segments: [SolveSegment]
     var pendingSegment: PendingSegment?
     var annotations: [VideoAnnotation]
 
     init(id: UUID = UUID(), videoPath: String, videoBookmark: Data?,
          recordedAt: Date, importedAt: Date = Date(), scramble: String? = nil,
+         trimmedAt: Date? = nil,
          segments: [SolveSegment] = [], pendingSegment: PendingSegment? = nil,
          annotations: [VideoAnnotation] = []) {
         self.id = id
@@ -93,6 +95,7 @@ struct Solve: Identifiable, Codable {
         self.recordedAt = recordedAt
         self.importedAt = importedAt
         self.scramble = scramble
+        self.trimmedAt = trimmedAt
         self.segments = segments
         self.pendingSegment = pendingSegment
         self.annotations = annotations

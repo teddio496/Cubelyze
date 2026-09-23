@@ -6,11 +6,11 @@
  objects = {
   A00000000000000000000001 = {isa = PBXProject; attributes = {LastUpgradeCheck = 1620;}; buildConfigurationList = A00000000000000000000010; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; knownRegions = (en, Base); mainGroup = A00000000000000000000002; productRefGroup = A00000000000000000000004; projectDirPath = ""; projectRoot = ""; targets = (A00000000000000000000005);};
   A00000000000000000000002 = {isa = PBXGroup; children = (A00000000000000000000003, A00000000000000000000004); sourceTree = "<group>";};
-  A00000000000000000000003 = {isa = PBXGroup; path = Cubelyze; sourceTree = "<group>"; children = (B00000000000000000000001, B00000000000000000000002, B00000000000000000000003, B00000000000000000000004, B00000000000000000000005);};
+  A00000000000000000000003 = {isa = PBXGroup; path = Cubelyze; sourceTree = "<group>"; children = (B00000000000000000000001, B00000000000000000000002, B00000000000000000000003, B00000000000000000000004, B00000000000000000000005, B00000000000000000000006);};
   A00000000000000000000004 = {isa = PBXGroup; name = Products; sourceTree = "<group>"; children = (A00000000000000000000006);};
   A00000000000000000000005 = {isa = PBXNativeTarget; buildConfigurationList = A00000000000000000000011; buildPhases = (A00000000000000000000007, A00000000000000000000008, A00000000000000000000009); buildRules = (); dependencies = (); name = Cubelyze; productName = Cubelyze; productReference = A00000000000000000000006; productType = "com.apple.product-type.application";};
   A00000000000000000000006 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Cubelyze.app; sourceTree = BUILT_PRODUCTS_DIR;};
-  A00000000000000000000007 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (C00000000000000000000001, C00000000000000000000002, C00000000000000000000003, C00000000000000000000004, C00000000000000000000005); runOnlyForDeploymentPostprocessing = 0;};
+  A00000000000000000000007 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (C00000000000000000000001, C00000000000000000000002, C00000000000000000000003, C00000000000000000000004, C00000000000000000000005, C00000000000000000000006); runOnlyForDeploymentPostprocessing = 0;};
   A00000000000000000000008 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
   A00000000000000000000009 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
   A00000000000000000000010 = {isa = XCConfigurationList; buildConfigurations = (D00000000000000000000001, D00000000000000000000002); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;};
@@ -25,6 +25,8 @@
   C00000000000000000000004 = {isa = PBXBuildFile; fileRef = B00000000000000000000004;};
   B00000000000000000000005 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalysisStore.swift; sourceTree = "<group>";};
   C00000000000000000000005 = {isa = PBXBuildFile; fileRef = B00000000000000000000005;};
+  B00000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoTrimStore.swift; sourceTree = "<group>";};
+  C00000000000000000000006 = {isa = PBXBuildFile; fileRef = B00000000000000000000006;};
   D00000000000000000000001 = {isa = XCBuildConfiguration; buildSettings = {MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; CLANG_ENABLE_MODULES = YES; SWIFT_VERSION = 5.0; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; DEBUG_INFORMATION_FORMAT = dwarf;}; name = Debug;};
   D00000000000000000000002 = {isa = XCBuildConfiguration; buildSettings = {MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; CLANG_ENABLE_MODULES = YES; SWIFT_VERSION = 5.0; SWIFT_COMPILATION_MODE = wholemodule;}; name = Release;};
   D00000000000000000000003 = {isa = XCBuildConfiguration; buildSettings = {MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; CLANG_ENABLE_MODULES = YES; SWIFT_VERSION = 5.0; CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.video"; PRODUCT_BUNDLE_IDENTIFIER = com.cubelyze.Cubelyze; PRODUCT_NAME = "$(TARGET_NAME)"; MARKETING_VERSION = 0.1.0; CURRENT_PROJECT_VERSION = 1; COMBINE_HIDPI_IMAGES = YES;}; name = Debug;};
