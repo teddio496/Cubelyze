@@ -72,7 +72,17 @@ struct VideoTrimStore {
         session.timeRange = CMTimeRange(
             start: CMTime(seconds: start, preferredTimescale: 60_000),
             duration: CMTime(seconds: end - start, preferredTimescale: 60_000))
-        try await session.export(to: temporary, as: fileType)
+        session.outputURL = temporary
+        session.outputFileType = fileType
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            session.exportAsynchronously {
+                if session.status == .completed {
+                    continuation.resume()
+                } else {
+                    continuation.resume(throwing: session.error ?? VideoTrimError.invalidOutput)
+                }
+            }
+        }
         let exportedDuration = try await AVURLAsset(url: temporary).load(.duration).seconds
         guard exportedDuration.isFinite, exportedDuration > 0,
               abs(exportedDuration - (end - start)) <= 0.1 else {
