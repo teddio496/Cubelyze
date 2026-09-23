@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var playback = PlaybackModel()
+    @State private var confirmsTrim = false
     private let refreshTimer = Timer.publish(every: 1.0 / 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -28,6 +29,14 @@ struct ContentView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
+                if playback.isTrimming {
+                    ProgressView().controlSize(.small)
+                    Text("Trimming…").font(.caption)
+                } else if playback.canUndoTrim {
+                    Button("Undo Trim") { playback.undoTrim() }
+                } else if playback.trimRange != nil {
+                    Button("Trim Video…") { confirmsTrim = true }
+                }
                 Toggle("Overlay", isOn: $playback.showsAnalysisOverlay)
                     .toggleStyle(.switch)
                     .fixedSize()
@@ -59,6 +68,13 @@ struct ContentView: View {
             }
         }
         .padding()
+        .disabled(playback.isTrimming)
+        .confirmationDialog("Trim video to the completed solve?", isPresented: $confirmsTrim) {
+            Button("Trim Video") { Task { await playback.trimCompletedSolve() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Video before Cross and after PLL will be removed from the active copy. The original stays available for Undo until you quit Cubelyze, then is permanently deleted. Annotations outside the solve will also be removed.")
+        }
     }
 }
 
