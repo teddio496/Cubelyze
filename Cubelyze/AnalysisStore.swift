@@ -1,48 +1,39 @@
-import AppKit
-import CryptoKit
+import Foundation
 
 struct AnalysisStore {
-    private let defaults = UserDefaults.standard
-    private let lastProjectKey = "LastAnalysisProject"
-
-    private var projectsDirectory: URL {
+    private var solvesDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("Cubelyze/Projects", isDirectory: true)
+            .appendingPathComponent("Cubelyze/Solves", isDirectory: true)
     }
 
-    func projectURL(for videoURL: URL) -> URL {
-        let digest = SHA256.hash(data: Data(videoURL.path.utf8)).map { String(format: "%02x", $0) }.joined()
-        return projectsDirectory.appendingPathComponent("\(digest).json")
+    func allSolves() throws -> [Solve] {
+        guard FileManager.default.fileExists(atPath: solvesDirectory.path) else { return [] }
+        return try FileManager.default.contentsOfDirectory(at: solvesDirectory,
+                                                           includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "json" }
+            .map { try JSONDecoder().decode(Solve.self, from: Data(contentsOf: $0)) }
+            .sorted { $0.recordedAt > $1.recordedAt }
     }
 
-    func savedDocument(for projectURL: URL) -> AnalysisDocument? {
-        guard let data = try? Data(contentsOf: projectURL) else { return nil }
-        return try? JSONDecoder().decode(AnalysisDocument.self, from: data)
-    }
-
-    func lastProject() -> (url: URL, document: AnalysisDocument)? {
-        guard let path = defaults.string(forKey: lastProjectKey) else { return nil }
-        let url = URL(fileURLWithPath: path)
-        guard let document = savedDocument(for: url) else { return nil }
-        return (url, document)
-    }
-
-    func remember(projectURL: URL) { defaults.set(projectURL.path, forKey: lastProjectKey) }
-
-    func save(document: AnalysisDocument, to projectURL: URL) throws {
-        try FileManager.default.createDirectory(at: projectsDirectory, withIntermediateDirectories: true)
+    func save(_ solve: Solve) throws {
+        try FileManager.default.createDirectory(at: solvesDirectory, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(document).write(to: projectURL, options: .atomic)
+        try encoder.encode(solve).write(
+            to: solvesDirectory.appendingPathComponent("\(solve.id.uuidString).json"), options: .atomic)
     }
 
-    func resolveVideoURL(for document: AnalysisDocument) -> (url: URL?, stale: Bool) {
+    func resolveVideoURL(for solve: Solve) -> URL {
         var stale = false
-        let resolved = document.videoBookmark.flatMap {
+        let bookmarked = solve.videoBookmark.flatMap {
             try? URL(resolvingBookmarkData: $0, options: .withSecurityScope,
                     relativeTo: nil, bookmarkDataIsStale: &stale)
         }
-        return (resolved ?? URL(fileURLWithPath: document.videoPath), stale)
+        return bookmarked ?? URL(fileURLWithPath: solve.videoPath)
+    }
+
+    func videoExists(for solve: Solve) -> Bool {
+        FileManager.default.fileExists(atPath: resolveVideoURL(for: solve).path)
     }
 
     func bookmark(for videoURL: URL) -> Data? {

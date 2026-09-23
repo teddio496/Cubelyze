@@ -6,9 +6,23 @@ struct ContentView: View {
     private let refreshTimer = Timer.publish(every: 1.0 / 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
+        Group {
+            if playback.selectedSolveID == nil {
+                SolveLibrary(playback: playback)
+            } else {
+                analyzer
+            }
+        }
+        .frame(minWidth: 860, minHeight: 620)
+        .onReceive(refreshTimer) { _ in playback.refresh() }
+        .onDisappear { playback.player.pause() }
+    }
+
+    private var analyzer: some View {
         VStack(spacing: 10) {
             HStack {
-                Button("Open Video…", action: playback.chooseVideo)
+                Button("Library") { playback.showLibrary() }
+                Button("Import Video…", action: playback.chooseVideo)
                     .keyboardShortcut("o")
                 Text(playback.filename ?? "Choose a local video to begin")
                     .lineLimit(1)
@@ -36,11 +50,89 @@ struct ContentView: View {
             if let message = playback.errorMessage ?? playback.saveMessage ?? playback.annotationMessage ?? playback.segmentMessage {
                 Text(message).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading)
             }
+            if let solve = playback.selectedSolve, !playback.videoExists(for: solve) {
+                Button("Relink Video…") { playback.relinkVideo(for: solve) }
+            }
         }
         .padding()
-        .frame(minWidth: 860, minHeight: 620)
-        .onReceive(refreshTimer) { _ in playback.refresh() }
-        .onDisappear { playback.player.pause() }
+    }
+}
+
+private struct SolveLibrary: View {
+    @ObservedObject var playback: PlaybackModel
+
+    private var days: [Date] {
+        Array(Set(playback.solves.map { Calendar.current.startOfDay(for: $0.recordedAt) }))
+            .sorted(by: >)
+    }
+
+    private var completed: [Double] { playback.completedSolveDurations }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("Solve Library").font(.largeTitle).fontWeight(.semibold)
+                Spacer()
+                Button("Import Video…", action: playback.chooseVideo)
+                    .keyboardShortcut("o")
+            }
+            if let message = playback.errorMessage ?? playback.saveMessage {
+                Text(message).foregroundStyle(.red)
+            }
+            if let message = playback.importMessage { Text(message).foregroundStyle(.secondary) }
+            HStack(spacing: 24) {
+                Text("\(playback.solves.count) solves")
+                Text("\(completed.count) complete")
+                if let best = completed.min() {
+                    Text("Best \(PlaybackModel.timestamp(best))")
+                    Text("Average \(PlaybackModel.timestamp(completed.reduce(0, +) / Double(completed.count)))")
+                }
+            }
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            if playback.solves.isEmpty {
+                ContentUnavailableView("No solves yet", systemImage: "video",
+                                       description: Text("Import a video to start analyzing a solve."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    ForEach(days, id: \.self) { day in
+                        Section(day.formatted(.dateTime.weekday(.wide).month(.wide).day().year())) {
+                            ForEach(playback.solves.filter {
+                                Calendar.current.isDate($0.recordedAt, inSameDayAs: day)
+                            }) { solve in
+                                HStack {
+                                    Button { playback.openSolve(solve) } label: {
+                                        HStack {
+                                            Text(solve.recordedAt.formatted(date: .omitted, time: .shortened))
+                                                .monospacedDigit()
+                                            Text(solve.filename).lineLimit(1)
+                                            Spacer()
+                                            if !playback.videoExists(for: solve) {
+                                                Label("Video missing", systemImage: "exclamationmark.triangle")
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                            Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                    if !playback.videoExists(for: solve) {
+                                        Button("Relink…") { playback.relinkVideo(for: solve) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding()
+        .dropDestination(for: URL.self) { urls, _ in
+            let files = urls.filter(\.isFileURL)
+            guard !files.isEmpty else { return false }
+            Task { await playback.importVideos(files) }
+            return true
+        }
     }
 }
 
@@ -112,6 +204,16 @@ private struct AnalysisInspector: View {
                     }
                 }
                 Divider()
+                if playback.selectedSolve != nil {
+                    Text("Scramble").font(.caption).foregroundStyle(.secondary)
+                    TextField("Optional scramble", text: Binding(
+                        get: { playback.selectedSolve?.scramble ?? "" },
+                        set: playback.updateScramble
+                    ), axis: .vertical)
+                    .lineLimit(2...4)
+                    .textFieldStyle(.roundedBorder)
+                    Divider()
+                }
                 if let annotation = playback.selectedAnnotation {
                     EventDetails(playback: playback, annotation: annotation)
                 } else if let segment = playback.selectedSegment {

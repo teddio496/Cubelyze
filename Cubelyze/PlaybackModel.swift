@@ -24,6 +24,9 @@ final class PlaybackModel: ObservableObject {
     @Published var segmentMessage: String?
     @Published var errorMessage: String?
     @Published private(set) var saveMessage: String?
+    @Published private(set) var solves: [Solve] = []
+    @Published private(set) var selectedSolveID: UUID?
+    @Published private(set) var importMessage: String?
     private var seekTarget: CMTime?
     private var isSeeking = false
     private var pendingSteps = 0
@@ -33,12 +36,20 @@ final class PlaybackModel: ObservableObject {
     private var endObserver: NSObjectProtocol?
     private var terminationObserver: NSObjectProtocol?
     private var saveTask: Task<Void, Never>?
-    private var projectURL: URL?
     private var videoURL: URL?
     private var scopedVideoURL: URL?
-    private var recoveryDocument: AnalysisDocument?
-    private var recoveryProjectURL: URL?
     private let analysisStore = AnalysisStore()
+
+    func videoExists(for solve: Solve) -> Bool { analysisStore.videoExists(for: solve) }
+    var selectedSolve: Solve? { solves.first { $0.id == selectedSolveID } }
+
+    var completedSolveDurations: [Double] { solves.compactMap(\.completedDuration) }
+
+    func updateScramble(_ value: String) {
+        guard let index = solves.firstIndex(where: { $0.id == selectedSolveID }) else { return }
+        solves[index].scramble = value.isEmpty ? nil : value
+        scheduleSave()
+    }
 
     init() {
         endObserver = NotificationCenter.default.addObserver(
@@ -56,7 +67,8 @@ final class PlaybackModel: ObservableObject {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.saveNow() }
         }
-        restoreLastProject()
+        do { solves = try analysisStore.allSolves() }
+        catch { errorMessage = "Could not load solve library: \(error.localizedDescription)" }
     }
 
     deinit {
@@ -69,57 +81,112 @@ final class PlaybackModel: ObservableObject {
     func chooseVideo() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.movie]
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.prompt = "Import"
+        panel.begin { [weak self] response in
+            guard response == .OK else { return }
+            Task { @MainActor [weak self] in await self?.importVideos(panel.urls) }
+        }
+    }
+
+    func importVideos(_ urls: [URL]) async {
+        var added = 0
+        var existing = 0
+        var failed = 0
+        var first: Solve?
+        for url in urls where url.isFileURL {
+            let file = url.standardizedFileURL
+            if let match = solves.first(where: {
+                analysisStore.resolveVideoURL(for: $0).standardizedFileURL == file
+            }) {
+                existing += 1
+                if urls.count == 1 { first = match }
+                continue
+            }
+            let accessed = file.startAccessingSecurityScopedResource()
+            defer { if accessed { file.stopAccessingSecurityScopedResource() } }
+            let recordedAt = await Self.recordingDate(for: file)
+            let solve = Solve(videoPath: file.path,
+                              videoBookmark: analysisStore.bookmark(for: file),
+                              recordedAt: recordedAt)
+            do {
+                try analysisStore.save(solve)
+                solves.append(solve)
+                added += 1
+                if first == nil { first = solve }
+            } catch { failed += 1 }
+        }
+        solves.sort { $0.recordedAt > $1.recordedAt }
+        if urls.count == 1, let first { openSolve(first) }
+        else if added > 0, selectedSolveID != nil { showLibrary() }
+        importMessage = "Imported \(added) video(s). \(existing) already in library. \(failed) failed."
+    }
+
+    private static func recordingDate(for url: URL) async -> Date {
+        let asset = AVURLAsset(url: url)
+        if let item = try? await asset.load(.creationDate),
+           let date = try? await item.load(.dateValue) { return date }
+        let values = try? url.resourceValues(forKeys: [.creationDateKey])
+        return values?.creationDate ?? Date()
+    }
+
+    func relinkVideo(for solve: Solve) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.movie]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        panel.prompt = "Open Video"
+        panel.prompt = "Relink"
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
-            self?.open(url)
+            self?.setVideo(url, for: solve.id)
         }
     }
 
-    func open(_ url: URL) {
-        let standardizedURL = url.standardizedFileURL
-        if let recoveryDocument,
-           URL(fileURLWithPath: recoveryDocument.videoPath).lastPathComponent == standardizedURL.lastPathComponent {
-            let destination = recoveryProjectURL ?? projectFileURL(for: standardizedURL)
-            self.recoveryDocument = nil
-            recoveryProjectURL = nil
-            openVideo(standardizedURL, restoring: recoveryDocument, projectURL: destination)
-            return
+    private func setVideo(_ url: URL, for id: UUID) {
+        if selectedSolveID == id {
+            saveTask?.cancel()
+            saveNow()
         }
-        let destination = projectFileURL(for: standardizedURL)
-        if let document = analysisStore.savedDocument(for: destination) {
-            openVideo(standardizedURL, restoring: document, projectURL: destination)
-            return
-        }
-        openVideo(standardizedURL, restoring: nil, projectURL: destination)
+        guard let index = solves.firstIndex(where: { $0.id == id }) else { return }
+        let file = url.standardizedFileURL
+        let accessed = file.startAccessingSecurityScopedResource()
+        defer { if accessed { file.stopAccessingSecurityScopedResource() } }
+        var updated = solves[index]
+        updated.videoPath = file.path
+        updated.videoBookmark = analysisStore.bookmark(for: file)
+        do {
+            try analysisStore.save(updated)
+            solves[index] = updated
+            if selectedSolveID == id { openSolve(updated) }
+            importMessage = "Video relinked."
+        } catch { saveMessage = "Could not relink video: \(error.localizedDescription)" }
     }
 
-    private func openVideo(_ url: URL, restoring document: AnalysisDocument?, projectURL: URL) {
+    func openSolve(_ solve: Solve) {
+        let url = analysisStore.resolveVideoURL(for: solve)
         saveTask?.cancel()
         saveNow()
         player.pause()
         scopedVideoURL?.stopAccessingSecurityScopedResource()
+        selectedSolveID = solve.id
         if url.startAccessingSecurityScopedResource() { scopedVideoURL = url } else { scopedVideoURL = nil }
-        videoURL = url
-        self.projectURL = projectURL
-        analysisStore.remember(projectURL: projectURL)
-        filename = url.lastPathComponent
-        annotations = document?.annotations ?? []
+        videoURL = FileManager.default.fileExists(atPath: url.path) ? url : nil
+        filename = solve.filename
+        annotations = solve.annotations
         selectedAnnotationID = nil
         pendingAnnotation = nil
         annotationMessage = nil
-        segments = document?.segments ?? []
+        segments = solve.segments
         selectedSegmentID = nil
-        pendingSegment = document?.pendingSegment
+        pendingSegment = solve.pendingSegment
         segmentMessage = nil
         position = 0
         duration = 0
         videoAspectRatio = 16.0 / 9.0
         isReady = false
         isPlaying = false
-        errorMessage = nil
+        errorMessage = videoURL == nil ? "The video is missing or was moved." : nil
         seekTarget = nil
         isSeeking = false
         pendingSteps = 0
@@ -127,9 +194,22 @@ final class PlaybackModel: ObservableObject {
         playAfterSeek = false
         scrubPosition = nil
         reachedEnd = false
-        player.replaceCurrentItem(with: AVPlayerItem(url: url))
-        player.play()
-        scheduleSave()
+        player.replaceCurrentItem(with: videoURL.map(AVPlayerItem.init(url:)))
+        if videoURL != nil { player.play() }
+    }
+
+    func showLibrary() {
+        saveTask?.cancel()
+        saveNow()
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+        scopedVideoURL?.stopAccessingSecurityScopedResource()
+        scopedVideoURL = nil
+        videoURL = nil
+        selectedSolveID = nil
+        filename = nil
+        isReady = false
+        isPlaying = false
     }
 
     func togglePlayback() {
@@ -309,10 +389,8 @@ final class PlaybackModel: ObservableObject {
     var longestPause: VideoAnnotation? { pauseAnnotations.max { ($0.timing.duration ?? 0) < ($1.timing.duration ?? 0) } }
     func eventCount(_ category: AnnotationCategory) -> Int { annotations.filter { $0.category == category }.count }
 
-    private func projectFileURL(for videoURL: URL) -> URL { analysisStore.projectURL(for: videoURL) }
-
     private func scheduleSave() {
-        guard projectURL != nil, videoURL != nil else { return }
+        guard selectedSolveID != nil else { return }
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(400))
@@ -322,32 +400,19 @@ final class PlaybackModel: ObservableObject {
     }
 
     private func saveNow() {
-        guard let projectURL, let videoURL else { return }
+        guard let id = selectedSolveID,
+              let index = solves.firstIndex(where: { $0.id == id }) else { return }
         do {
-            let bookmark = analysisStore.bookmark(for: videoURL)
-            let document = AnalysisDocument(schemaVersion: 1, videoPath: videoURL.path,
-                                            videoBookmark: bookmark, segments: segments,
-                                            pendingSegment: pendingSegment, annotations: annotations)
-            try analysisStore.save(document: document, to: projectURL)
+            var solve = solves[index]
+            solve.segments = segments
+            solve.pendingSegment = pendingSegment
+            solve.annotations = annotations
+            try analysisStore.save(solve)
+            solves[index] = solve
             saveMessage = nil
         } catch {
             saveMessage = "Could not save analysis: \(error.localizedDescription)"
         }
-    }
-
-    private func restoreLastProject() {
-        guard let saved = analysisStore.lastProject() else { return }
-        let savedURL = saved.url
-        let document = saved.document
-        let candidate = analysisStore.resolveVideoURL(for: document).url!
-        guard FileManager.default.fileExists(atPath: candidate.path) else {
-            errorMessage = "The saved video is missing or was moved. Use Open Video… to locate it."
-            filename = URL(fileURLWithPath: document.videoPath).lastPathComponent
-            recoveryDocument = document
-            recoveryProjectURL = savedURL
-            return
-        }
-        openVideo(candidate, restoring: document, projectURL: savedURL)
     }
 
     func stepFrame(by count: Int) {
