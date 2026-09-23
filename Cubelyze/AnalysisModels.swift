@@ -34,7 +34,7 @@ enum AnnotationTiming: Codable {
 
 struct VideoAnnotation: Identifiable, Codable {
     let id: UUID
-    let timing: AnnotationTiming
+    var timing: AnnotationTiming
     let category: AnnotationCategory
     var note: String
     init(id: UUID = UUID(), timing: AnnotationTiming, category: AnnotationCategory, note: String = "") {

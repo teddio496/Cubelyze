@@ -13,6 +13,12 @@ Requires macOS 14 or later. Built with Swift and SwiftUI; no third-party depende
 - Xcode Command Line Tools, including the Swift compiler and macOS SDK
 - A macOS-supported `.mov` or `.mp4` video codec for testing
 
+## Download and install
+
+Download the latest `Cubelyze-*-macOS.dmg` from [GitHub Releases](https://github.com/teddio496/Cubelyze/releases). Open the DMG and drag Cubelyze to Applications. The ZIP is an alternative portable download. Cubelyze requires macOS 14 or later. Replace an older version by dragging the new app over it; uninstall by deleting Cubelyze from Applications. Your local solve data remains in `~/Library/Application Support/Cubelyze`.
+
+GitHub downloads are ad-hoc signed and not Apple notarized. macOS may block the first launch; if you trust the download, use **System Settings → Privacy & Security → Open Anyway** after the blocked launch. Building from source is also supported below.
+
 Xcode is optional. Install it if you want to open the project in Xcode, use the
 Xcode debugger, or build with `xcodebuild`. The command-line build script works
 with the standalone Xcode Command Line Tools:
@@ -66,6 +72,9 @@ Press **Pause** once at its start and again at its end:
 Pause events appear as spans on a separate timeline lane; the other events appear
 as point markers. All appear in the chronological annotation list.
 Click a marker, span, or list entry to seek to its start; click its trash button to delete it.
+Hover or select a duration span to reveal its edge handles. Drag an edge to resize
+the interval, or drag the span to move it without changing its duration. The
+drag readout shows the updated times; edits are clamped to the video.
 Select an event from its timeline marker/span or the annotation list to edit an
 optional note or delete it. Each solve autosaves as human-readable JSON in
 `~/Library/Application Support/Cubelyze/Solves` and appears in the library when
@@ -97,6 +106,10 @@ in the list or its timeline block to seek to its start. **Edit** moves its start
 or end boundary and updates the neighboring segment at that shared timestamp;
 it also changes the optional case label. Times are seconds. Deleting a segment
 removes it and all later segments so the remaining sequence stays continuous.
+Hover the divider between two completed segments and drag it to adjust their
+shared boundary. Both phase durations update together. To place an interval or
+segment edge on an exact frame, step the video to that frame and use **Start ←
+playhead** or **End ← playhead** in the inspector.
 
 Once all phases from Cross through PLL are segmented, **Trim Video…** can remove
 footage before Cross and after PLL. It creates a smaller, app-managed copy and
@@ -126,15 +139,13 @@ sh scripts/build.sh
 open build/Cubelyze.app
 ```
 
-To create a versioned ZIP for a GitHub release:
+To create a versioned development ZIP:
 
 ```sh
 sh scripts/package-release.sh 0.1.0
 ```
 
-The resulting archive is ad-hoc signed for development. Public binaries should
-be signed with a Developer ID certificate and notarized by Apple before release;
-otherwise macOS Gatekeeper may warn users.
+The resulting archive is ad-hoc signed. The tagged release workflow builds with Xcode and uploads an ad-hoc signed DMG and ZIP to GitHub Releases. These artifacts are not Apple notarized.
 
 ## Current limitations
 
@@ -145,7 +156,7 @@ otherwise macOS Gatekeeper may warn users.
   can be imported as separate solves.
 - There is no automated test suite yet; builds and affected workflows must be
   verified manually.
-- Release archives produced by the included script are not notarized.
+- Development archives produced by `package-release.sh` are not notarized.
 
 ## Contributing
 

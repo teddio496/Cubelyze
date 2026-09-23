@@ -43,6 +43,7 @@ final class PlaybackModel: ObservableObject {
     private var saveTask: Task<Void, Never>?
     private var videoURL: URL?
     private var scopedVideoURL: URL?
+    private var lastTimelineEditSeek: TimeInterval = 0
     private let analysisStore = AnalysisStore()
     private let trimStore = VideoTrimStore()
     private var undoableTrims: [UUID: (original: Solve, receipt: PendingTrimReceipt)] = [:]
@@ -451,6 +452,30 @@ final class PlaybackModel: ObservableObject {
         scheduleSave()
     }
 
+    @discardableResult
+    func updateAnnotationInterval(id: UUID, start: Double, end: Double, commit: Bool) -> Bool {
+        guard duration > 0, start.isFinite, end.isFinite,
+              start >= 0, end <= duration, end - start >= 0.001,
+              let index = annotations.firstIndex(where: { $0.id == id }),
+              annotations[index].timing.end != nil else { return false }
+        if !commit { saveTask?.cancel() }
+        annotations[index].timing = .interval(start: start, end: end)
+        if commit {
+            annotations.sort { $0.timing.start < $1.timing.start }
+            scheduleSave()
+        }
+        return true
+    }
+
+    func placeAnnotationEdgeAtPlayhead(id: UUID, startEdge: Bool) -> Bool {
+        guard isReady, let annotation = annotations.first(where: { $0.id == id }),
+              let end = annotation.timing.end else { return false }
+        let time = player.currentTime().seconds
+        return updateAnnotationInterval(id: id,
+                                        start: startEdge ? time : annotation.timing.start,
+                                        end: startEdge ? end : time, commit: true)
+    }
+
     func markNextSegmentBoundary() {
         guard isReady else { return }
         let time = player.currentTime().seconds
@@ -505,6 +530,26 @@ final class PlaybackModel: ObservableObject {
         return true
     }
 
+    @discardableResult
+    func moveSharedBoundary(before rightID: UUID, to time: Double, commit: Bool) -> Bool {
+        guard time.isFinite,
+              let index = segments.firstIndex(where: { $0.id == rightID }), index > 0,
+              time >= segments[index - 1].start + 0.001,
+              time <= segments[index].end - 0.001 else { return false }
+        if !commit { saveTask?.cancel() }
+        segments[index - 1].end = time
+        segments[index].start = time
+        if commit { scheduleSave() }
+        return true
+    }
+
+    func placeSegmentEdgeAtPlayhead(id: UUID, startEdge: Bool) -> Bool {
+        guard isReady, let segment = segments.first(where: { $0.id == id }) else { return false }
+        let time = player.currentTime().seconds
+        return updateSegment(segment, start: startEdge ? time : segment.start,
+                             end: startEdge ? segment.end : time, caseLabel: segment.caseLabel)
+    }
+
     func deleteSegment(_ segment: SolveSegment) {
         guard let index = segments.firstIndex(where: { $0.id == segment.id }) else { return }
         let restart = segments[index].start
@@ -523,10 +568,21 @@ final class PlaybackModel: ObservableObject {
         segments.first { $0.id == selectedSegmentID }
     }
 
-    func selectSegment(_ segment: SolveSegment) {
+    func selectSegment(_ segment: SolveSegment, seek: Bool = true) {
         selectedSegmentID = segment.id
         selectedAnnotationID = nil
-        seek(to: segment.start)
+        if seek { self.seek(to: segment.start) }
+    }
+
+    func seekForTimelineEdit(to seconds: Double, final: Bool = false) {
+        guard isReady else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard final || now - lastTimelineEditSeek >= 0.06 else { return }
+        lastTimelineEditSeek = now
+        player.pause()
+        playAfterSeek = false
+        seek(to: seconds)
+        playAfterSeek = false
     }
 
     func clearSelection() {
