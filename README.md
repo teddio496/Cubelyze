@@ -28,8 +28,13 @@ build commands below are the available build checks.
 ## Run
 
 Open `Cubelyze.xcodeproj` in Xcode, select the Cubelyze scheme and My Mac,
-then press Run. Click **Import Video…** (⌘O) and choose a `.mov` or `.mp4` file
-with a macOS-supported codec. Playback starts automatically; click **Pause** or
+then press Run. Click **Import Video…** (⌘O), choose one or more `.mov` or `.mp4`
+files, or drop video files onto the library. A single import opens its analyzer;
+multiple imports remain in the library, grouped by recording day. Cubelyze uses
+video creation metadata when available, then the file creation date, then the
+import date. Importing the same file path again opens its existing solve instead
+of creating another. Choose a video with a macOS-supported codec. Playback starts
+automatically when a solve opens; click **Pause** or
 press Space to toggle playback.
 
 - **Left/Right Arrow:** pause and step one video frame backward/forward.
@@ -64,9 +69,14 @@ the app reopens. The JSON stores a security-scoped bookmark for persistent video
 access; the original video is never modified. Existing files in the older
 `Projects` directory are retained but are not automatically added to the library.
 
-The statistics strip summarizes analyzed solve and phase durations, pause time,
+The inspector summarizes analyzed solve and phase durations, pause time,
 pause count and longest pause, plus Rotation, Regrip, and Other counts. Click the
 longest pause to select it and seek to its start.
+
+The inspector has an optional editable scramble for the current solve. The library
+shows the count, best time, and mean time of completed solves (those with PLL
+finished). If a video moves, use **Relink…** on its library row to choose the
+video again; the solve's analysis stays intact.
 
 ## Solve segments
 
@@ -116,7 +126,8 @@ otherwise macOS Gatekeeper may warn users.
 - macOS 14 or later is required.
 - Video support is limited to codecs supported by AVFoundation on the user's Mac.
 - Analyses autosave locally, but there is no in-app export or sharing workflow yet.
-- The library currently imports one video at a time; repeat imports create separate solves.
+- Duplicate detection currently uses the resolved file path. Copies at a new path
+  can be imported as separate solves.
 - There is no automated test suite yet; builds and affected workflows must be
   verified manually.
 - Release archives produced by the included script are not notarized.

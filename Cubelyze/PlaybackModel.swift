@@ -26,6 +26,7 @@ final class PlaybackModel: ObservableObject {
     @Published private(set) var saveMessage: String?
     @Published private(set) var solves: [Solve] = []
     @Published private(set) var selectedSolveID: UUID?
+    @Published private(set) var importMessage: String?
     private var seekTarget: CMTime?
     private var isSeeking = false
     private var pendingSteps = 0
@@ -40,6 +41,15 @@ final class PlaybackModel: ObservableObject {
     private let analysisStore = AnalysisStore()
 
     func videoExists(for solve: Solve) -> Bool { analysisStore.videoExists(for: solve) }
+    var selectedSolve: Solve? { solves.first { $0.id == selectedSolveID } }
+
+    var completedSolveDurations: [Double] { solves.compactMap(\.completedDuration) }
+
+    func updateScramble(_ value: String) {
+        guard let index = solves.firstIndex(where: { $0.id == selectedSolveID }) else { return }
+        solves[index].scramble = value.isEmpty ? nil : value
+        scheduleSave()
+    }
 
     init() {
         endObserver = NotificationCenter.default.addObserver(
@@ -71,27 +81,86 @@ final class PlaybackModel: ObservableObject {
     func chooseVideo() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.movie]
-        panel.allowsMultipleSelection = false
+        panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
-        panel.prompt = "Open Video"
+        panel.prompt = "Import"
         panel.begin { [weak self] response in
-            guard response == .OK, let url = panel.url else { return }
-            self?.open(url)
+            guard response == .OK else { return }
+            Task { @MainActor [weak self] in await self?.importVideos(panel.urls) }
         }
     }
 
-    func open(_ url: URL) {
-        let standardizedURL = url.standardizedFileURL
-        let recordedAt = (try? standardizedURL.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? Date()
-        let solve = Solve(videoPath: standardizedURL.path,
-                          videoBookmark: analysisStore.bookmark(for: standardizedURL),
-                          recordedAt: recordedAt)
+    func importVideos(_ urls: [URL]) async {
+        var added = 0
+        var existing = 0
+        var failed = 0
+        var first: Solve?
+        for url in urls where url.isFileURL {
+            let file = url.standardizedFileURL
+            if let match = solves.first(where: {
+                analysisStore.resolveVideoURL(for: $0).standardizedFileURL == file
+            }) {
+                existing += 1
+                if urls.count == 1 { first = match }
+                continue
+            }
+            let accessed = file.startAccessingSecurityScopedResource()
+            defer { if accessed { file.stopAccessingSecurityScopedResource() } }
+            let recordedAt = await Self.recordingDate(for: file)
+            let solve = Solve(videoPath: file.path,
+                              videoBookmark: analysisStore.bookmark(for: file),
+                              recordedAt: recordedAt)
+            do {
+                try analysisStore.save(solve)
+                solves.append(solve)
+                added += 1
+                if first == nil { first = solve }
+            } catch { failed += 1 }
+        }
+        solves.sort { $0.recordedAt > $1.recordedAt }
+        if urls.count == 1, let first { openSolve(first) }
+        else if added > 0, selectedSolveID != nil { showLibrary() }
+        importMessage = "Imported \(added) video(s). \(existing) already in library. \(failed) failed."
+    }
+
+    private static func recordingDate(for url: URL) async -> Date {
+        let asset = AVURLAsset(url: url)
+        if let item = try? await asset.load(.creationDate),
+           let date = try? await item.load(.dateValue) { return date }
+        let values = try? url.resourceValues(forKeys: [.creationDateKey])
+        return values?.creationDate ?? Date()
+    }
+
+    func relinkVideo(for solve: Solve) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.movie]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.prompt = "Relink"
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            self?.setVideo(url, for: solve.id)
+        }
+    }
+
+    private func setVideo(_ url: URL, for id: UUID) {
+        if selectedSolveID == id {
+            saveTask?.cancel()
+            saveNow()
+        }
+        guard let index = solves.firstIndex(where: { $0.id == id }) else { return }
+        let file = url.standardizedFileURL
+        let accessed = file.startAccessingSecurityScopedResource()
+        defer { if accessed { file.stopAccessingSecurityScopedResource() } }
+        var updated = solves[index]
+        updated.videoPath = file.path
+        updated.videoBookmark = analysisStore.bookmark(for: file)
         do {
-            try analysisStore.save(solve)
-            solves.insert(solve, at: 0)
-            solves.sort { $0.recordedAt > $1.recordedAt }
-            openSolve(solve)
-        } catch { saveMessage = "Could not create solve: \(error.localizedDescription)" }
+            try analysisStore.save(updated)
+            solves[index] = updated
+            if selectedSolveID == id { openSolve(updated) }
+            importMessage = "Video relinked."
+        } catch { saveMessage = "Could not relink video: \(error.localizedDescription)" }
     }
 
     func openSolve(_ solve: Solve) {

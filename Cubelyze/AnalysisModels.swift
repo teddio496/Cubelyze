@@ -99,4 +99,9 @@ struct Solve: Identifiable, Codable {
     }
 
     var filename: String { URL(fileURLWithPath: videoPath).lastPathComponent }
+    var completedDuration: Double? {
+        guard pendingSegment == nil, segments.last?.type == .pll,
+              let first = segments.first, let last = segments.last else { return nil }
+        return max(0, last.end - first.start)
+    }
 }
