@@ -73,7 +73,7 @@ struct ContentView: View {
             Button("Trim Video") { Task { await playback.trimCompletedSolve() } }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Video before Cross and after PLL will be removed from the active copy. The original stays available for Undo until you quit Cubelyze, then is permanently deleted. Annotations outside the solve will also be removed.")
+            Text("Video before the first phase and after the final phase will be removed from the active copy. The original stays available for Undo until you quit Cubelyze, then is permanently deleted. Annotations outside the solve will also be removed.")
         }
     }
 }
@@ -255,7 +255,7 @@ private struct SegmentEditor: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Edit \(segment.type.title)")
                 .font(.headline)
-            Text("Type follows the Cross → F2L → OLL → PLL sequence.")
+            Text("Type follows the selected solve method.")
                 .foregroundStyle(.secondary)
             HStack {
                 Text("Start (seconds)")
@@ -289,6 +289,7 @@ private struct SegmentEditor: View {
 private struct AnalysisInspector: View {
     @ObservedObject var playback: PlaybackModel
     @State private var editingSegment: SolveSegment?
+    @State private var requestedTemplate: SolveMethodTemplate?
 
     var body: some View {
         ScrollView {
@@ -303,6 +304,27 @@ private struct AnalysisInspector: View {
                 }
                 Divider()
                 if playback.selectedSolve != nil {
+                    Picker("Solve method", selection: Binding(
+                        get: { playback.phaseTemplate.id },
+                        set: { id in
+                            guard let template = SolveMethodTemplate.presets.first(where: { $0.id == id }),
+                                  template != playback.phaseTemplate else { return }
+                            if playback.segments.isEmpty && playback.pendingSegment == nil {
+                                playback.updateMethodTemplate(template)
+                            } else {
+                                requestedTemplate = template
+                            }
+                        }
+                    )) {
+                        ForEach(SolveMethodTemplate.presets) { template in
+                            Text(template.title).tag(template.id)
+                        }
+                        if !SolveMethodTemplate.presets.contains(where: { $0.id == playback.phaseTemplate.id }) {
+                            Text(playback.phaseTemplate.title).tag(playback.phaseTemplate.id)
+                        }
+                    }
+                    Text(playback.phaseTemplate.phases.map(\.title).joined(separator: " → "))
+                        .font(.caption).foregroundStyle(.secondary)
                     Text("Scramble").font(.caption).foregroundStyle(.secondary)
                     TextField("Optional scramble", text: Binding(
                         get: { playback.selectedSolve?.scramble ?? "" },
@@ -323,6 +345,18 @@ private struct AnalysisInspector: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 4)
+        }
+        .confirmationDialog("Change solve method?", isPresented: Binding(
+            get: { requestedTemplate != nil },
+            set: { if !$0 { requestedTemplate = nil } }
+        )) {
+            Button("Change Method and Clear Segments", role: .destructive) {
+                if let requestedTemplate { playback.updateMethodTemplate(requestedTemplate) }
+                requestedTemplate = nil
+            }
+            Button("Cancel", role: .cancel) { requestedTemplate = nil }
+        } message: {
+            Text("Changing the method clears existing phase timings and case labels. Annotations and the scramble are kept.")
         }
         .sheet(item: $editingSegment) { segment in
             SegmentEditor(playback: playback, segment: segment)
