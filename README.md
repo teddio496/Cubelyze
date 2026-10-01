@@ -79,7 +79,8 @@ Select an event from its timeline marker/span or the annotation list to edit an
 optional note or delete it. Each solve autosaves as human-readable JSON in
 `~/Library/Application Support/Cubelyze/Solves` and appears in the library when
 the app reopens. The JSON stores a security-scoped bookmark for persistent video
-access; the original video is never modified. Existing files in the older
+access. Imported videos are not modified unless you explicitly trim them after
+segmentation. Existing files in the older
 `Projects` directory are retained but are not automatically added to the library.
 
 The inspector summarizes analyzed solve and phase durations, pause time,
@@ -109,6 +110,16 @@ Hover the divider between two completed segments and drag it to adjust their
 shared boundary. Both phase durations update together. To place an interval or
 segment edge on an exact frame, step the video to that frame and use **Start ←
 playhead** or **End ← playhead** in the inspector.
+
+Once all phases from Cross through PLL are segmented, **Trim Video…** can remove
+footage before Cross and after PLL. It creates a smaller, app-managed copy and
+shifts the analysis timestamps to match. Annotations outside the retained range
+are removed; overlapping Pause annotations are clipped. The original remains on
+disk for **Undo Trim** during the current app session. On normal quit (or on the
+next launch after an interrupted session), Cubelyze deletes the original only
+after checking that the saved solve uses the trimmed copy and no other solve
+uses the original. Trimming temporarily requires space for both files; if the
+export cannot save disk space, it is discarded and the original stays active.
 
 ## Build
 

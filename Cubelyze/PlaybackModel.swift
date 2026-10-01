@@ -27,6 +27,7 @@ final class PlaybackModel: ObservableObject {
     @Published private(set) var solves: [Solve] = []
     @Published private(set) var selectedSolveID: UUID?
     @Published private(set) var importMessage: String?
+    @Published private(set) var isTrimming = false
     @Published var showsAnalysisOverlay: Bool =
         UserDefaults.standard.object(forKey: "ShowsAnalysisOverlay") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showsAnalysisOverlay, forKey: "ShowsAnalysisOverlay") }
@@ -44,9 +45,29 @@ final class PlaybackModel: ObservableObject {
     private var scopedVideoURL: URL?
     private var lastTimelineEditSeek: TimeInterval = 0
     private let analysisStore = AnalysisStore()
+    private let trimStore = VideoTrimStore()
+    private var undoableTrims: [UUID: (original: Solve, receipt: PendingTrimReceipt)] = [:]
 
     func videoExists(for solve: Solve) -> Bool { analysisStore.videoExists(for: solve) }
     var selectedSolve: Solve? { solves.first { $0.id == selectedSolveID } }
+    var canUndoTrim: Bool { selectedSolveID.flatMap { undoableTrims[$0] } != nil && !isTrimming }
+    var trimRange: (start: Double, end: Double)? {
+        guard !isTrimming, isReady, duration > 0, let solve = selectedSolve,
+              solve.trimmedAt == nil, pendingSegment == nil,
+              segments.map(\.type) == SolveSegmentType.allCases,
+              let first = segments.first, let last = segments.last,
+              first.start >= 0, last.end <= duration + 0.05,
+              first.start > 0.05 || duration - last.end > 0.05,
+              segments.allSatisfy({ $0.start.isFinite && $0.end.isFinite && $0.end > $0.start }),
+              zip(segments, segments.dropFirst()).allSatisfy({ abs($0.end - $1.start) < 0.05 }),
+              !solves.contains(where: {
+                  $0.id != solve.id &&
+                  analysisStore.resolveVideoURL(for: $0).standardizedFileURL ==
+                  analysisStore.resolveVideoURL(for: solve).standardizedFileURL
+              })
+        else { return nil }
+        return (first.start, min(last.end, duration))
+    }
 
     var completedSolveDurations: [Double] { solves.compactMap(\.completedDuration) }
 
@@ -70,10 +91,14 @@ final class PlaybackModel: ObservableObject {
         terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.saveNow() }
+            MainActor.assumeIsolated {
+                self?.saveNow()
+                self?.finalizePendingTrims()
+            }
         }
         do { solves = try analysisStore.allSolves() }
         catch { errorMessage = "Could not load solve library: \(error.localizedDescription)" }
+        finalizePendingTrims()
     }
 
     deinit {
@@ -149,6 +174,10 @@ final class PlaybackModel: ObservableObject {
     }
 
     private func setVideo(_ url: URL, for id: UUID) {
+        guard !isTrimming, undoableTrims[id] == nil else {
+            importMessage = "Undo the trim before relinking this video."
+            return
+        }
         if selectedSolveID == id {
             saveTask?.cancel()
             saveNow()
@@ -169,6 +198,7 @@ final class PlaybackModel: ObservableObject {
     }
 
     func openSolve(_ solve: Solve) {
+        guard !isTrimming else { return }
         let url = analysisStore.resolveVideoURL(for: solve)
         saveTask?.cancel()
         saveNow()
@@ -204,6 +234,7 @@ final class PlaybackModel: ObservableObject {
     }
 
     func showLibrary() {
+        guard !isTrimming else { return }
         saveTask?.cancel()
         saveNow()
         player.pause()
@@ -215,6 +246,126 @@ final class PlaybackModel: ObservableObject {
         filename = nil
         isReady = false
         isPlaying = false
+    }
+
+    func trimCompletedSolve() async {
+        guard let range = trimRange, let original = selectedSolve, let source = videoURL else { return }
+        saveTask?.cancel()
+        saveNow()
+        guard saveMessage == nil, let original = solves.first(where: { $0.id == original.id }) else { return }
+        isTrimming = true
+        player.pause()
+        defer { isTrimming = false }
+        var exportedURL: URL?
+        var receiptSaved = false
+        do {
+            let before = try trimStore.fingerprint(for: source)
+            let export = try await trimStore.export(source: source, start: range.start, end: range.end)
+            exportedURL = export.url
+            let after = try trimStore.fingerprint(for: source)
+            guard before.size == after.size, before.modified == after.modified,
+                  before.fileNumber == after.fileNumber else { throw VideoTrimError.changedOriginal }
+            var updated = original
+            updated.videoPath = export.url.path
+            updated.videoBookmark = nil
+            updated.trimmedAt = Date()
+            updated.segments = segments.map { segment in
+                var shifted = segment
+                shifted.start = max(0, segment.start - range.start)
+                shifted.end = min(export.duration, segment.end - range.start)
+                return shifted
+            }
+            updated.annotations = annotations.compactMap { annotation -> VideoAnnotation? in
+                let timing: AnnotationTiming
+                switch annotation.timing {
+                case .point(let time):
+                    guard time >= range.start, time <= range.end else { return nil }
+                    timing = .point(min(export.duration, time - range.start))
+                case .interval(let start, let end):
+                    let clippedStart = max(start, range.start)
+                    let clippedEnd = min(end, range.end)
+                    guard clippedEnd > clippedStart else { return nil }
+                    let shiftedStart = max(0, clippedStart - range.start)
+                    let shiftedEnd = min(export.duration, clippedEnd - range.start)
+                    guard shiftedEnd > shiftedStart else { return nil }
+                    timing = .interval(start: shiftedStart, end: shiftedEnd)
+                }
+                return VideoAnnotation(id: annotation.id, timing: timing,
+                                       category: annotation.category, note: annotation.note)
+            }
+            let receipt = PendingTrimReceipt(solveID: original.id, originalPath: source.path,
+                                             originalBookmark: original.videoBookmark,
+                                             originalSize: before.size,
+                                             originalModificationDate: before.modified,
+                                             originalFileNumber: before.fileNumber,
+                                             trimmedPath: export.url.path)
+            try trimStore.saveReceipt(receipt)
+            receiptSaved = true
+            try analysisStore.save(updated)
+            undoableTrims[original.id] = (original, receipt)
+            if let index = solves.firstIndex(where: { $0.id == original.id }) { solves[index] = updated }
+            selectedSolveID = nil
+            isTrimming = false
+            openSolve(updated)
+            saveMessage = "Video trimmed. Undo is available until you quit the app."
+        } catch {
+            if receiptSaved { try? trimStore.removeReceipt(for: original.id) }
+            if let exportedURL { try? trimStore.discardTrimmedFile(at: exportedURL) }
+            saveMessage = "Could not trim video: \(error.localizedDescription)"
+        }
+    }
+
+    func undoTrim() {
+        guard let id = selectedSolveID, let undo = undoableTrims[id] else { return }
+        guard FileManager.default.fileExists(atPath: undo.receipt.originalPath) else {
+            saveMessage = "Could not undo trim: the original video is missing."
+            return
+        }
+        saveTask?.cancel()
+        saveNow()
+        do {
+            try analysisStore.save(undo.original)
+            try trimStore.removeReceipt(for: id)
+            if let index = solves.firstIndex(where: { $0.id == id }) { solves[index] = undo.original }
+            undoableTrims.removeValue(forKey: id)
+            selectedSolveID = nil
+            openSolve(undo.original)
+            try trimStore.discardTrimmedFile(at: URL(fileURLWithPath: undo.receipt.trimmedPath))
+            saveMessage = "Trim undone. The original video is active again."
+        } catch { saveMessage = "Could not undo trim: \(error.localizedDescription)" }
+    }
+
+    private func finalizePendingTrims() {
+        do {
+            for receipt in try trimStore.receipts() {
+                guard let solve = solves.first(where: { $0.id == receipt.solveID }),
+                      solve.videoPath == receipt.trimmedPath, solve.trimmedAt != nil,
+                      FileManager.default.fileExists(atPath: receipt.trimmedPath),
+                      !solves.contains(where: {
+                          $0.id != receipt.solveID &&
+                          analysisStore.resolveVideoURL(for: $0).standardizedFileURL.path == receipt.originalPath
+                      })
+                else { continue }
+                var stale = false
+                let originalURL = receipt.originalBookmark.flatMap {
+                    try? URL(resolvingBookmarkData: $0, options: .withSecurityScope,
+                             relativeTo: nil, bookmarkDataIsStale: &stale)
+                } ?? URL(fileURLWithPath: receipt.originalPath)
+                guard originalURL.standardizedFileURL.path == receipt.originalPath else { continue }
+                guard FileManager.default.fileExists(atPath: receipt.originalPath) else {
+                    try trimStore.removeReceipt(for: receipt.solveID)
+                    continue
+                }
+                let current = try trimStore.fingerprint(for: originalURL)
+                guard current.size == receipt.originalSize,
+                      current.modified == receipt.originalModificationDate,
+                      current.fileNumber == receipt.originalFileNumber else { continue }
+                let accessed = originalURL.startAccessingSecurityScopedResource()
+                defer { if accessed { originalURL.stopAccessingSecurityScopedResource() } }
+                try FileManager.default.removeItem(at: originalURL)
+                try trimStore.removeReceipt(for: receipt.solveID)
+            }
+        } catch { saveMessage = "Could not finish trim cleanup: \(error.localizedDescription)" }
     }
 
     func togglePlayback() {
