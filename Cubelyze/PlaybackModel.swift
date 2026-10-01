@@ -50,11 +50,12 @@ final class PlaybackModel: ObservableObject {
 
     func videoExists(for solve: Solve) -> Bool { analysisStore.videoExists(for: solve) }
     var selectedSolve: Solve? { solves.first { $0.id == selectedSolveID } }
+    var phaseTemplate: SolveMethodTemplate { selectedSolve?.phaseTemplate ?? .standard }
     var canUndoTrim: Bool { selectedSolveID.flatMap { undoableTrims[$0] } != nil && !isTrimming }
     var trimRange: (start: Double, end: Double)? {
         guard !isTrimming, isReady, duration > 0, let solve = selectedSolve,
               solve.trimmedAt == nil, pendingSegment == nil,
-              segments.map(\.type) == SolveSegmentType.allCases,
+              phaseTemplate.isComplete(segments),
               let first = segments.first, let last = segments.last,
               first.start >= 0, last.end <= duration + 0.05,
               first.start > 0.05 || duration - last.end > 0.05,
@@ -70,6 +71,17 @@ final class PlaybackModel: ObservableObject {
     }
 
     var completedSolveDurations: [Double] { solves.compactMap(\.completedDuration) }
+
+    func updateMethodTemplate(_ template: SolveMethodTemplate) {
+        guard !isTrimming, template != phaseTemplate, !template.phases.isEmpty,
+              let index = solves.firstIndex(where: { $0.id == selectedSolveID }) else { return }
+        solves[index].methodTemplate = template
+        segments = []
+        pendingSegment = nil
+        selectedSegmentID = nil
+        segmentMessage = nil
+        scheduleSave()
+    }
 
     func updateScramble(_ value: String) {
         guard let index = solves.firstIndex(where: { $0.id == selectedSolveID }) else { return }
@@ -481,17 +493,16 @@ final class PlaybackModel: ObservableObject {
         let time = player.currentTime().seconds
         guard time.isFinite else { return }
         guard let pending = pendingSegment else {
-            if segments.last?.type == .pll {
+            guard let expected = phaseTemplate.nextPhase(after: segments.last?.type) else {
                 segmentMessage = "The solve sequence is complete."
                 return
             }
-            let expected = segments.last.flatMap { SolveSegmentType(rawValue: $0.type.rawValue + 1) } ?? .cross
             pendingSegment = PendingSegment(type: expected, start: segments.last?.end ?? max(0, time))
             segmentMessage = nil
             scheduleSave()
             return
         }
-        let next = SolveSegmentType(rawValue: pending.type.rawValue + 1)
+        let next = phaseTemplate.nextPhase(after: pending.type)
         guard time > pending.start else {
             segmentMessage = "End time must be later than start time."
             return

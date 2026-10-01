@@ -28,8 +28,8 @@ xcode-select --install
 ```
 
 There are no Swift Package Manager, CocoaPods, Homebrew, or other third-party
-dependencies to install. The app currently has no automated test suite; the
-build commands below are the available build checks.
+dependencies to install. The build commands below check the app; `sh scripts/test-phase-templates.sh`
+checks phase progression and persistence compatibility.
 
 ## Run
 
@@ -88,15 +88,26 @@ pause count and longest pause, plus Rotation, Regrip, and Other counts. Click th
 longest pause to select it and seek to its start.
 
 The inspector has an optional editable scramble for the current solve. The library
-shows the count, best time, and mean time of completed solves (those with PLL
+shows the count, best time, and mean time of completed solves (those with every phase in their selected method
 finished). If a video moves, use **Relink…** on its library row to choose the
 video again; the solve's analysis stays intact.
 
 ## Solve segments
 
-Press **Next Segment** or **Shift+N** at the start of Cross, then again just
-after Cross is completed. Each press closes the current segment and immediately
-starts the next: F2L #1–4, OLL, then PLL. Press once more after PLL and final
+Choose **Solve method** in the inspector before marking boundaries. Standard
+CFOP is the default; presets also support XCross, 2-look OLL, 2-look PLL, and
+all combinations of these variants. The phase sequence appears below the picker.
+XCross combines Cross and the first F2L pair into one phase; 2-look variants
+split OLL or PLL into two timed steps. Each solve remembers its method.
+Changing a method after marking boundaries asks for confirmation and clears
+phase timings and case labels; annotations and the scramble are kept. Older
+solve files load as Standard CFOP.
+
+
+Press **Next Segment** or **Shift+N** at the start of the first phase, then again
+after that phase is completed. Each press closes the current segment and immediately
+starts the next phase in the selected method. For Standard CFOP, this is Cross,
+F2L #1–4, OLL, then PLL. Press once more after the final phase and final
 AUF to close the solve. Recognition, setup moves, pauses, and other transitions
 remain inside the active segment. There are no transition segments or gaps.
 
@@ -111,8 +122,8 @@ shared boundary. Both phase durations update together. To place an interval or
 segment edge on an exact frame, step the video to that frame and use **Start ←
 playhead** or **End ← playhead** in the inspector.
 
-Once all phases from Cross through PLL are segmented, **Trim Video…** can remove
-footage before Cross and after PLL. It creates a smaller, app-managed copy and
+Once all phases in the selected method are segmented, **Trim Video…** can remove
+footage before the first phase and after the final phase. It creates a smaller, app-managed copy and
 shifts the analysis timestamps to match. Annotations outside the retained range
 are removed; overlapping Pause annotations are clipped. The original remains on
 disk for **Undo Trim** during the current app session. On normal quit (or on the
@@ -154,8 +165,8 @@ The resulting archive is ad-hoc signed. The tagged release workflow builds with 
 - Analyses autosave locally, but there is no in-app export or sharing workflow yet.
 - Duplicate detection currently uses the resolved file path. Copies at a new path
   can be imported as separate solves.
-- There is no automated test suite yet; builds and affected workflows must be
-  verified manually.
+- Phase progression and persistence have automated checks; playback and affected
+  UI workflows still require manual verification.
 - Development archives produced by `package-release.sh` are not notarized.
 
 ## Contributing
