@@ -169,6 +169,12 @@ The resulting archive is ad-hoc signed. The tagged release workflow builds with 
   UI workflows still require manual verification.
 - Development archives produced by `package-release.sh` are not notarized.
 
+## App icon
+
+Cubelyze includes a custom cube-and-timeline icon in both Xcode and command-line
+builds. Source artwork and regeneration instructions are in
+[docs/design/app-icon.md](docs/design/app-icon.md).
+
 ## Contributing
 
 Issues and focused pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md)
