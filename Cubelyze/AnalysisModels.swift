@@ -37,8 +37,20 @@ struct VideoAnnotation: Identifiable, Codable {
     var timing: AnnotationTiming
     let category: AnnotationCategory
     var note: String
-    init(id: UUID = UUID(), timing: AnnotationTiming, category: AnnotationCategory, note: String = "") {
+    var tagIDs: [String]
+    init(id: UUID = UUID(), timing: AnnotationTiming, category: AnnotationCategory, note: String = "", tagIDs: [String] = []) {
         self.id = id; self.timing = timing; self.category = category; self.note = note
+        self.tagIDs = tagIDs
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, timing, category, note, tagIDs }
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        timing = try container.decode(AnnotationTiming.self, forKey: .timing)
+        category = try container.decode(AnnotationCategory.self, forKey: .category)
+        note = try container.decode(String.self, forKey: .note)
+        tagIDs = try container.decodeIfPresent([String].self, forKey: .tagIDs) ?? []
     }
 }
 

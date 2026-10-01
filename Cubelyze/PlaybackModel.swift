@@ -302,8 +302,9 @@ final class PlaybackModel: ObservableObject {
                     guard shiftedEnd > shiftedStart else { return nil }
                     timing = .interval(start: shiftedStart, end: shiftedEnd)
                 }
-                return VideoAnnotation(id: annotation.id, timing: timing,
-                                       category: annotation.category, note: annotation.note)
+                var shifted = annotation
+                shifted.timing = timing
+                return shifted
             }
             let receipt = PendingTrimReceipt(solveID: original.id, originalPath: source.path,
                                              originalBookmark: original.videoBookmark,
@@ -462,6 +463,22 @@ final class PlaybackModel: ObservableObject {
         guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
         annotations[index].note = note
         scheduleSave()
+    }
+
+    func toggleAnnotationTag(id: UUID, tagID: String) {
+        guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
+        if annotations[index].tagIDs.contains(tagID) {
+            annotations[index].tagIDs.removeAll { $0 == tagID }
+        } else {
+            annotations[index].tagIDs.append(tagID)
+        }
+        scheduleSave()
+    }
+
+    func phaseForAnnotation(_ annotation: VideoAnnotation) -> SolveSegmentType? {
+        let time = annotation.timing.start
+        return segments.first { $0.start <= time && time < $0.end }?.type
+            ?? (pendingSegment.flatMap { $0.start <= time ? $0.type : nil })
     }
 
     @discardableResult
