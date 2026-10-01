@@ -22,7 +22,8 @@ Cubelyze scheme on My Mac.
 - Keep changes focused and explain the user-facing reason for them.
 - Build with `sh scripts/build.sh` before submitting.
 - Run `sh scripts/test-phase-templates.sh` for phase progression and persistence
-  compatibility changes. Manually exercise affected video-review workflows.
+  compatibility changes, and `sh scripts/test-issue-tags.sh` for annotation tags.
+  Manually exercise affected video-review workflows.
 - Update the README when controls, requirements, storage, or limitations change.
 - Do not commit videos, personal analysis data, build products, or signing keys.
 

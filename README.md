@@ -29,7 +29,8 @@ xcode-select --install
 
 There are no Swift Package Manager, CocoaPods, Homebrew, or other third-party
 dependencies to install. The build commands below check the app; `sh scripts/test-phase-templates.sh`
-checks phase progression and persistence compatibility.
+checks phase progression and persistence compatibility. Run
+`sh scripts/test-issue-tags.sh` for annotation tag checks.
 
 ## Run
 
@@ -72,6 +73,17 @@ Press **Pause** once at its start and again at its end:
 Pause events appear as spans on a separate timeline lane; the other events appear
 as point markers. All appear in the chronological annotation list.
 Click a marker, span, or list entry to seek to its start; click its trash button to delete it.
+
+Select an event and choose **Add Tags…** in the inspector to attach one or more
+structured issue tags. The searchable picker groups 30 built-in tags by Pause /
+lookahead, Recognition / planning, F2L efficiency, Rotation / orientation, and
+Execution. Tags relevant to the event and its phase appear first in each group.
+Click a tag to toggle it, or search and press Return; use arrow keys in the list
+and Return or Space to toggle the selected result. Remove a tag with its × button
+in the inspector. Free-text notes remain available alongside tags. Tags autosave
+with each solve and are preserved when trimming. Unavailable catalog entries
+remain saved and can still be removed.
+
 Hover or select a duration span to reveal its edge handles. Drag an edge to resize
 the interval, or drag the span to move it without changing its duration. The
 drag readout shows the updated times; edits are clamped to the video.
@@ -165,7 +177,7 @@ The resulting archive is ad-hoc signed. The tagged release workflow builds with 
 - Analyses autosave locally, but there is no in-app export or sharing workflow yet.
 - Duplicate detection currently uses the resolved file path. Copies at a new path
   can be imported as separate solves.
-- Phase progression and persistence have automated checks; playback and affected
+- Phase progression, annotation tags, and persistence have automated checks; playback and affected
   UI workflows still require manual verification.
 - Development archives produced by `package-release.sh` are not notarized.
 

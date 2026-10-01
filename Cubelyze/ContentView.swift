@@ -368,6 +368,7 @@ private struct EventDetails: View {
     @ObservedObject var playback: PlaybackModel
     let annotation: VideoAnnotation
     @State private var edgeError: String?
+    @State private var showsTagPicker = false
 
     private var note: Binding<String> {
         Binding(get: { playback.annotations.first(where: { $0.id == annotation.id })?.note ?? "" },
@@ -392,6 +393,25 @@ private struct EventDetails: View {
             } else {
                 InspectorValue(label: "Time", value: PlaybackModel.timestamp(annotation.timing.start))
             }
+            HStack {
+                Text("Issue tags").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Add Tags…") { showsTagPicker = true }
+                    .popover(isPresented: $showsTagPicker) {
+                        AnnotationTagPicker(playback: playback, annotation: annotation)
+                    }
+            }
+            ForEach(annotation.tagIDs, id: \.self) { tagID in
+                HStack(alignment: .top) {
+                    Text(IssueTag.displayName(for: tagID)).font(.caption)
+                    Spacer()
+                    Button { playback.toggleAnnotationTag(id: annotation.id, tagID: tagID) } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Remove \(IssueTag.displayName(for: tagID))")
+                }
+            }
             Text("Note").font(.caption).foregroundStyle(.secondary)
             TextField("Optional note", text: note, axis: .vertical)
                 .lineLimit(3...6).textFieldStyle(.roundedBorder)
@@ -402,6 +422,89 @@ private struct EventDetails: View {
     private func placeEdge(start: Bool) {
         edgeError = playback.placeAnnotationEdgeAtPlayhead(id: annotation.id, startEdge: start)
             ? nil : "Step to a frame inside the valid range first."
+    }
+}
+
+private struct AnnotationTagPicker: View {
+    @ObservedObject var playback: PlaybackModel
+    let annotation: VideoAnnotation
+    @State private var query = ""
+    @State private var focusedID: String?
+    @FocusState private var searchFocused: Bool
+
+    private var tags: [IssueTag] {
+        IssueTag.matching(query, event: annotation.category, phase: playback.phaseForAnnotation(annotation))
+    }
+    private var categories: [String] {
+        tags.reduce(into: []) { result, tag in
+            if !result.contains(tag.category) { result.append(tag.category) }
+        }
+    }
+    private var selectedIDs: [String] {
+        playback.annotations.first { $0.id == annotation.id }?.tagIDs ?? []
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Issue tags").font(.headline)
+            TextField("Search tags", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .focused($searchFocused)
+                .onSubmit { toggleFocusedTag() }
+            Text("Common tags for this event and phase appear first in each group.")
+                .font(.caption).foregroundStyle(.secondary)
+            if tags.isEmpty {
+                Text("No matching tags.").foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(selection: $focusedID) {
+                    ForEach(categories, id: \.self) { category in
+                        Section(category) {
+                            ForEach(tags.filter { $0.category == category }) { tag in
+                                HStack {
+                                    Text(tag.name)
+                                    Spacer()
+                                    if selectedIDs.contains(tag.id) {
+                                        Image(systemName: "checkmark").foregroundStyle(.blue)
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                                .tag(tag.id)
+                                .onTapGesture {
+                                    focusedID = tag.id
+                                    playback.toggleAnnotationTag(id: annotation.id, tagID: tag.id)
+                                }
+                                .help(tag.description.isEmpty ? tag.name : tag.description)
+                                .accessibilityLabel("\(tag.name), \(selectedIDs.contains(tag.id) ? "selected" : "not selected")")
+                                .accessibilityAddTraits(.isButton)
+                                .accessibilityAction {
+                                    playback.toggleAnnotationTag(id: annotation.id, tagID: tag.id)
+                                }
+                            }
+                        }
+                    }
+                }
+                .onKeyPress(.return) { toggleFocusedTag(); return .handled }
+                .onKeyPress(.space) { toggleFocusedTag(); return .handled }
+            }
+            HStack {
+                Text("Return toggles a search result; use arrows in the list to browse.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button(selectedIDs.contains(focusedID ?? "") ? "Remove" : "Add") { toggleFocusedTag() }
+                    .disabled(tags.isEmpty)
+            }
+        }
+        .padding()
+        .frame(width: 400, height: 440)
+        .onAppear { searchFocused = true; focusedID = tags.first?.id }
+        .onChange(of: query) { _, _ in focusedID = tags.first?.id }
+    }
+
+    private func toggleFocusedTag() {
+        guard let tagID = focusedID ?? tags.first?.id,
+              tags.contains(where: { $0.id == tagID }) else { return }
+        playback.toggleAnnotationTag(id: annotation.id, tagID: tagID)
     }
 }
 
