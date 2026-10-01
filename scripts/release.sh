@@ -22,4 +22,4 @@ ditto "$app" "$staging/Cubelyze.app"
 ln -s /Applications "$staging/Applications"
 dmg="$PWD/build/release/Cubelyze-${version}-macOS.dmg"
 hdiutil create -volname Cubelyze -srcfolder "$staging" -format UDZO -ov "$dmg"
-shasum -a 256 "$dmg" "$zip" > "$PWD/build/release/SHA256SUMS.txt"
+(cd "$PWD/build/release" && shasum -a 256 "$(basename "$dmg")" "$(basename "$zip")" > SHA256SUMS.txt)
