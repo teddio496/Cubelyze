@@ -3,7 +3,8 @@ set -eu
 cd "$(dirname "$0")/.."
 
 app="build/Cubelyze.app"
-mkdir -p "$app/Contents/MacOS" build/ModuleCache
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" build/ModuleCache
+cp Cubelyze/Resources/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 xcrun swiftc -parse-as-library -O \
   -Xlinker -no_adhoc_codesign \
   -target "$(uname -m)-apple-macosx14.0" \
@@ -16,6 +17,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
     <key>CFBundleExecutable</key><string>Cubelyze</string>
     <key>CFBundleIdentifier</key><string>com.cubelyze.Cubelyze</string>
     <key>CFBundleName</key><string>Cubelyze</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1.0</string>
     <key>CFBundleVersion</key><string>1</string>
