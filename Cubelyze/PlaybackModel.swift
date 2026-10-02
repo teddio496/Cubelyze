@@ -23,6 +23,7 @@ final class PlaybackModel: ObservableObject {
     @Published private(set) var pendingSegment: PendingSegment?
     @Published var segmentMessage: String?
     @Published var errorMessage: String?
+    @Published private(set) var isSaving = false
     @Published private(set) var saveMessage: String?
     @Published private(set) var solves: [Solve] = []
     @Published private(set) var selectedSolveID: UUID?
@@ -32,6 +33,8 @@ final class PlaybackModel: ObservableObject {
         UserDefaults.standard.object(forKey: "ShowsAnalysisOverlay") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showsAnalysisOverlay, forKey: "ShowsAnalysisOverlay") }
     }
+    private var restorePosition: Double?
+    private var timelineUndoRecorded = false
     private var seekTarget: CMTime?
     private var isSeeking = false
     private var pendingSteps = 0
@@ -81,6 +84,60 @@ final class PlaybackModel: ObservableObject {
         selectedSegmentID = nil
         segmentMessage = nil
         scheduleSave()
+    }
+
+    var segmentActionTitle: String {
+        if let pending = pendingSegment {
+            if let next = phaseTemplate.nextPhase(after: pending.type) {
+                return "Finish \(pending.type.title) → \(next.title)"
+            }
+            return "Finish Solve"
+        }
+        return phaseTemplate.nextPhase(after: segments.last?.type).map { "Start \($0.title)" } ?? "Solve Complete"
+    }
+
+    var sequenceComplete: Bool { pendingSegment == nil && phaseTemplate.isComplete(segments) }
+
+    func adjacentSolve(_ offset: Int) -> Solve? {
+        guard let index = solves.firstIndex(where: { $0.id == selectedSolveID }),
+              solves.indices.contains(index + offset) else { return nil }
+        return solves[index + offset]
+    }
+    func openAdjacentSolve(_ offset: Int) {
+        if let solve = adjacentSolve(offset) { openSolve(solve) }
+    }
+
+    func thumbnailURL(for solve: Solve) -> URL { analysisStore.resolveVideoURL(for: solve) }
+
+    private struct EditSnapshot {
+        let solveID: UUID?
+        let segments: [SolveSegment]
+        let pendingSegment: PendingSegment?
+        let annotations: [VideoAnnotation]
+        let pendingAnnotation: PendingAnnotation?
+    }
+    private var editSnapshot: EditSnapshot {
+        EditSnapshot(solveID: selectedSolveID, segments: segments, pendingSegment: pendingSegment,
+                     annotations: annotations, pendingAnnotation: pendingAnnotation)
+    }
+    private func recordUndo(_ name: String) {
+        registerUndo(editSnapshot, name: name)
+    }
+    private func registerUndo(_ snapshot: EditSnapshot, name: String) {
+        let manager = NSApp.keyWindow?.undoManager
+        manager?.registerUndo(withTarget: self) { model in
+            MainActor.assumeIsolated {
+                guard model.selectedSolveID == snapshot.solveID else { return }
+                model.registerUndo(model.editSnapshot, name: name)
+                model.segments = snapshot.segments
+                model.pendingSegment = snapshot.pendingSegment
+                model.annotations = snapshot.annotations
+                model.pendingAnnotation = snapshot.pendingAnnotation
+                model.clearSelection()
+                model.scheduleSave()
+            }
+        }
+        manager?.setActionName(name)
     }
 
     func updateScramble(_ value: String) {
@@ -216,6 +273,9 @@ final class PlaybackModel: ObservableObject {
         saveNow()
         player.pause()
         scopedVideoURL?.stopAccessingSecurityScopedResource()
+        NSApp.keyWindow?.undoManager?.removeAllActions(withTarget: self)
+        timelineUndoRecorded = false
+        restorePosition = solve.lastPosition
         selectedSolveID = solve.id
         if url.startAccessingSecurityScopedResource() { scopedVideoURL = url } else { scopedVideoURL = nil }
         videoURL = FileManager.default.fileExists(atPath: url.path) ? url : nil
@@ -242,7 +302,7 @@ final class PlaybackModel: ObservableObject {
         scrubPosition = nil
         reachedEnd = false
         player.replaceCurrentItem(with: videoURL.map(AVPlayerItem.init(url:)))
-        if videoURL != nil { player.play() }
+        // Review opens paused; restore the saved playhead when the asset is ready.
     }
 
     func showLibrary() {
@@ -281,6 +341,7 @@ final class PlaybackModel: ObservableObject {
             updated.videoPath = export.url.path
             updated.videoBookmark = nil
             updated.trimmedAt = Date()
+            updated.lastPosition = max(0, min(export.duration, position - range.start))
             updated.segments = segments.map { segment in
                 var shifted = segment
                 shifted.start = max(0, segment.start - range.start)
@@ -448,6 +509,7 @@ final class PlaybackModel: ObservableObject {
     }
 
     func deleteAnnotation(_ annotation: VideoAnnotation) {
+        recordUndo("Delete Event")
         annotations.removeAll { $0.id == annotation.id }
         if selectedAnnotationID == annotation.id { selectedAnnotationID = nil }
         scheduleSave()
@@ -461,12 +523,14 @@ final class PlaybackModel: ObservableObject {
 
     func updateAnnotationNote(id: UUID, note: String) {
         guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
+        recordUndo("Edit Note")
         annotations[index].note = note
         scheduleSave()
     }
 
     func toggleAnnotationTag(id: UUID, tagID: String) {
         guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
+        recordUndo("Change Tags")
         if annotations[index].tagIDs.contains(tagID) {
             annotations[index].tagIDs.removeAll { $0 == tagID }
         } else {
@@ -487,6 +551,8 @@ final class PlaybackModel: ObservableObject {
               start >= 0, end <= duration, end - start >= 0.001,
               let index = annotations.firstIndex(where: { $0.id == id }),
               annotations[index].timing.end != nil else { return false }
+        if !timelineUndoRecorded { recordUndo("Move Boundary"); timelineUndoRecorded = true }
+        if commit { timelineUndoRecorded = false }
         if !commit { saveTask?.cancel() }
         annotations[index].timing = .interval(start: start, end: end)
         if commit {
@@ -514,6 +580,7 @@ final class PlaybackModel: ObservableObject {
                 segmentMessage = "The solve sequence is complete."
                 return
             }
+            recordUndo("Start Phase")
             pendingSegment = PendingSegment(type: expected, start: segments.last?.end ?? max(0, time))
             segmentMessage = nil
             scheduleSave()
@@ -524,8 +591,10 @@ final class PlaybackModel: ObservableObject {
             segmentMessage = "End time must be later than start time."
             return
         }
+        recordUndo("Mark Phase Boundary")
         segments.append(SolveSegment(type: pending.type, start: pending.start, end: time, caseLabel: ""))
         pendingSegment = next.map { PendingSegment(type: $0, start: time) }
+        if next == nil { clearSelection(); player.pause() }
         segmentMessage = nil
         scheduleSave()
     }
@@ -543,6 +612,7 @@ final class PlaybackModel: ObservableObject {
         }
         guard index == 0 || start > segments[index - 1].start else { return false }
         guard index + 1 == segments.count || end < segments[index + 1].end else { return false }
+        recordUndo("Edit Phase")
         if index > 0 {
             segments[index - 1].end = start
         }
@@ -564,6 +634,8 @@ final class PlaybackModel: ObservableObject {
               let index = segments.firstIndex(where: { $0.id == rightID }), index > 0,
               time >= segments[index - 1].start + 0.001,
               time <= segments[index].end - 0.001 else { return false }
+        if !timelineUndoRecorded { recordUndo("Move Boundary"); timelineUndoRecorded = true }
+        if commit { timelineUndoRecorded = false }
         if !commit { saveTask?.cancel() }
         segments[index - 1].end = time
         segments[index].start = time
@@ -578,8 +650,21 @@ final class PlaybackModel: ObservableObject {
                              end: startEdge ? segment.end : time, caseLabel: segment.caseLabel)
     }
 
+    func stepSegmentEdge(id: UUID, startEdge: Bool, direction: Double) async -> Bool {
+        guard isReady, let item = player.currentItem else { return false }
+        let solveID = selectedSolveID
+        guard let tracks = try? await item.asset.loadTracks(withMediaType: .video),
+              let track = tracks.first, let rate = try? await track.load(.nominalFrameRate),
+              rate > 0, selectedSolveID == solveID, player.currentItem === item,
+              let segment = segments.first(where: { $0.id == id }) else { return false }
+        let step = direction / Double(rate)
+        return updateSegment(segment, start: segment.start + (startEdge ? step : 0),
+                             end: segment.end + (startEdge ? 0 : step), caseLabel: segment.caseLabel)
+    }
+
     func deleteSegment(_ segment: SolveSegment) {
         guard let index = segments.firstIndex(where: { $0.id == segment.id }) else { return }
+        recordUndo("Delete Phases")
         let restart = segments[index].start
         segments.removeSubrange(index...)
         if selectedSegmentID == segment.id { selectedSegmentID = nil }
@@ -657,6 +742,7 @@ final class PlaybackModel: ObservableObject {
     private func scheduleSave() {
         guard selectedSolveID != nil else { return }
         saveTask?.cancel()
+        isSaving = true
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
@@ -672,10 +758,13 @@ final class PlaybackModel: ObservableObject {
             solve.segments = segments
             solve.pendingSegment = pendingSegment
             solve.annotations = annotations
+            if isReady, position.isFinite { solve.lastPosition = position }
             try analysisStore.save(solve)
             solves[index] = solve
             saveMessage = nil
+            isSaving = false
         } catch {
+            isSaving = false
             saveMessage = "Could not save analysis: \(error.localizedDescription)"
         }
     }
@@ -768,6 +857,10 @@ final class PlaybackModel: ObservableObject {
         let total = item.duration.seconds
         position = current.isFinite ? max(0, current) : 0
         duration = total.isFinite ? max(0, total) : 0
+        if isReady, duration > 0, let restore = restorePosition {
+            restorePosition = nil
+            seek(to: min(duration, max(0, restore)))
+        }
         if item.status == .failed, errorMessage == nil {
             errorMessage = item.error?.localizedDescription ?? "This video could not be played."
         }

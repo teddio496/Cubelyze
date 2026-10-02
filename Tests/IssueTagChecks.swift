@@ -44,9 +44,18 @@ struct IssueTagChecks {
         precondition(IssueTagPhase(phase: .init(id: "custom", title: "Custom")) == nil)
         precondition(IssueTag.matching("REGRIP", event: .other, phase: nil).map(\.id) == ["execution.regrip"])
         precondition(!IssueTag.matching("lookahead", event: .pause, phase: .f2l1).isEmpty)
+        let search = IssueTag.matching("rotation", event: .pause, phase: .cross)
+        let nameMatch = search.firstIndex { $0.id == "rotation.unnecessary" }!
+        let categoryMatch = search.firstIndex { $0.id == "orientation.u_searching" }!
+        precondition(nameMatch < categoryMatch)
         precondition(IssueTag.matching("zzzzzz", event: .pause, phase: nil).isEmpty)
 
         let solve = Solve(videoPath: "/demo.mov", videoBookmark: nil, recordedAt: Date(), annotations: [restored])
+        var resumedSolve = solve
+        resumedSolve.lastPosition = 12.345
+        let resumed = try decoder.decode(Solve.self, from: encoder.encode(resumedSolve))
+        precondition(resumed.lastPosition == 12.345)
+        precondition(solve.lastPosition == nil)
         let saved = try decoder.decode(Solve.self, from: encoder.encode(solve))
         precondition(saved.annotations.first?.tagIDs == restored.tagIDs)
         print("Issue tag checks passed (catalog, legacy annotations, unknown IDs, search, recommendations).")

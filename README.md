@@ -40,8 +40,7 @@ files, or drop video files onto the library. A single import opens its analyzer;
 multiple imports remain in the library, grouped by recording day. Cubelyze uses
 video creation metadata when available, then the file creation date, then the
 import date. Importing the same file path again opens its existing solve instead
-of creating another. Choose a video with a macOS-supported codec. Playback starts
-automatically when a solve opens; click **Pause** or
+of creating another. Choose a video with a macOS-supported codec. Opening a solve restores its saved playhead and starts paused; click **Play** or
 press Space to toggle playback.
 
 - **Left/Right Arrow:** pause and step one video frame backward/forward.
@@ -57,6 +56,29 @@ or end of the video; pressing Play after playback ends starts it again.
 The **Overlay** switch (or ⌘⇧H) shows the current phase and active Pause directly
 on the video. Point events appear only while the playhead is near their timestamp.
 The switch remembers its setting between launches and does not change the analysis.
+
+## Review workspace
+
+The video, timeline, and inspector use resizable split panes. Hide the inspector
+with the toolbar sidebar button. Transport controls sit beneath the video;
+phase and event marking controls sit above the timeline. The phase action names
+its next step, and completion exposes Review Events and Next Solve.
+
+Use **Compact / Expand**, **Fit Video**, **Fit Solve**, **Fit Selection**, and the
+**− / +** timeline controls to manage space and zoom. The shared time ruler aligns
+with all lanes; nearby point events are grouped by type and can be selected from
+a count menu or **Event List**. The video has **Fit / − / +** controls; drag the
+zoomed picture to pan around the cube.
+
+Selected-event or phase details appear first in the inspector. **Solve Details**
+contains the method and scramble. Phase boundaries and case labels are edited
+inline; use playhead placement or frame adjustments to refine an edge. **⌘Z**
+undoes annotation deletion, tag/note changes, and boundary edits. Deleting a phase
+asks before removing it and all later phases.
+
+The library includes thumbnails, per-solve timing and review status, search, and
+status filters. Toolbar arrows navigate between solves without returning to the
+library. The toolbar reports Saving / Saved; failures remain visible.
 
 ## Annotations
 
@@ -125,7 +147,7 @@ remain inside the active segment. There are no transition segments or gaps.
 
 The **Solve** button uses this boundary workflow. **Cancel** discards an
 unfinished boundary. The list shows start, end, and duration. Click a segment
-in the list or its timeline block to seek to its start. **Edit** moves its start
+in the list or its timeline block to seek to its start. The inspector moves its start
 or end boundary and updates the neighboring segment at that shared timestamp;
 it also changes the optional case label. Times are seconds. Deleting a segment
 removes it and all later segments so the remaining sequence stays continuous.
@@ -194,3 +216,5 @@ for setup and verification guidance. Security issues should be reported accordin
 to [SECURITY.md](SECURITY.md).
 
 Licensed under the MIT License.
+
+The analysis inspector uses Overview, Details, and Tags tabs. Overview emphasizes total solve time and grouped phase totals; select a phase or event for detailed edits. The header’s ellipsis menu holds import, solve navigation, inspector visibility, and trimming. Playback shortcuts are shown in tooltips. Phases use distinct Cross, F2L, OLL, and PLL colors, and shared boundaries have visible drag handles with live timing feedback.

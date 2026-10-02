@@ -37,6 +37,9 @@ struct IssueTag: Identifiable, Codable {
                 $0.localizedStandardContains(query)
             }
         }.sorted {
+            let leftName = !query.isEmpty && $0.name.localizedStandardContains(query)
+            let rightName = !query.isEmpty && $1.name.localizedStandardContains(query)
+            if leftName != rightName { return leftName }
             let left = $0.relevance(event: event, phase: phase)
             let right = $1.relevance(event: event, phase: phase)
             return left == right ? $0.name.localizedStandardCompare($1.name) == .orderedAscending : left > right

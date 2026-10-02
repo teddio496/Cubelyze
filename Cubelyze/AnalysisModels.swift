@@ -59,6 +59,21 @@ struct SolveSegmentType: Hashable, Codable {
     let id: String
     let title: String
 
+    var groupTitle: String {
+        if id == "cross" || id == "xcross" { return "Cross" }
+        if id.hasPrefix("f2l") { return "F2L" }
+        if id.hasPrefix("oll") { return "OLL" }
+        if id.hasPrefix("pll") { return "PLL" }
+        return title
+    }
+    var color: Color {
+        switch groupTitle { case "Cross": return .cyan; case "F2L": return .blue; case "OLL": return .purple; case "PLL": return .green; default: return .teal }
+    }
+    var overlayTitle: String {
+        if id.hasPrefix("f2l."), let pair = id.split(separator: ".").last { return "F2L · Pair \(pair)" }
+        return title
+    }
+
     static let cross = Self(id: "cross", title: "Cross")
     static let f2l1 = Self(id: "f2l.1", title: "F2L #1")
     static let f2l2 = Self(id: "f2l.2", title: "F2L #2")
@@ -149,6 +164,7 @@ struct Solve: Identifiable, Codable {
     var recordedAt: Date
     let importedAt: Date
     var scramble: String?
+    var lastPosition: Double?
     var trimmedAt: Date?
     var methodTemplate: SolveMethodTemplate?
     var phaseTemplate: SolveMethodTemplate { methodTemplate ?? .standard }
@@ -175,6 +191,11 @@ struct Solve: Identifiable, Codable {
     }
 
     var filename: String { URL(fileURLWithPath: videoPath).lastPathComponent }
+    var displayName: String {
+        let name = URL(fileURLWithPath: videoPath).deletingPathExtension().lastPathComponent
+        if let range = name.range(of: "-trimmed-") { return String(name[..<range.lowerBound]) + " (trimmed)" }
+        return name
+    }
     var completedDuration: Double? {
         guard pendingSegment == nil, phaseTemplate.isComplete(segments),
               let first = segments.first, let last = segments.last else { return nil }

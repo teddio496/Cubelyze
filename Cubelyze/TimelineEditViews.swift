@@ -139,8 +139,12 @@ struct TimelineSegmentBoundary: View {
                 RoundedRectangle(cornerRadius: 3).fill(.blue.opacity(0.18))
             }
             Capsule()
-                .fill(Color.blue)
+                .fill(right.type.color)
                 .frame(width: hovered || dragging ? 4 : 2, height: 42)
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 8, weight: .bold)).rotationEffect(.degrees(90))
+                .padding(.vertical, 5).padding(.horizontal, 2)
+                .background(.regularMaterial, in: Capsule())
         }
         .frame(width: 18, height: 42)
         .contentShape(Rectangle())
