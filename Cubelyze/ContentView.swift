@@ -5,7 +5,6 @@ struct ContentView: View {
     @StateObject private var playback = PlaybackModel()
     @State private var confirmsTrim = false
     @State private var showsInspector = true
-    @State private var compactTimeline = false
     private let refreshTimer = Timer.publish(every: 1.0 / 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -53,9 +52,8 @@ struct ContentView: View {
                         ControlBar(playback: playback)
                     }
                     .frame(minWidth: 430, minHeight: 200)
-                    ReviewTimeline(playback: playback, compact: $compactTimeline)
-                        .frame(minHeight: compactTimeline ? 190 : 320, idealHeight: compactTimeline ? 220 : 390,
-                               maxHeight: compactTimeline ? 220 : .infinity)
+                    ReviewTimeline(playback: playback)
+                        .frame(minHeight: 350, idealHeight: 370, maxHeight: 400)
                 }
                 if showsInspector {
                     AnalysisInspector(playback: playback)
@@ -669,7 +667,6 @@ private struct ControlBar: View {
 private struct ReviewTimeline: View {
     @ObservedObject var playback: PlaybackModel
     @State private var zoom: CGFloat = 1
-    @Binding var compact: Bool
     @State private var focusPlayhead = false
 
     private var displayedPosition: Double { playback.scrubPosition ?? playback.position }
@@ -742,7 +739,6 @@ private struct ReviewTimeline: View {
             HStack {
                 Text("Timeline").font(.headline)
                 Spacer()
-                Button(compact ? "Expand" : "Compact") { compact.toggle() }
                 Button("Fit Video") { zoom = 1 }
                 Button("Fit Solve") { zoomToRange(playback.segments.first?.start, playback.segments.last?.end) }
                     .disabled(playback.segments.isEmpty)
@@ -815,7 +811,6 @@ private struct ReviewTimeline: View {
                     }
                     .frame(width: width, height: 42)
 
-                    if !compact {
                     Text("Events")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -863,7 +858,6 @@ private struct ReviewTimeline: View {
                     }
                     .frame(width: width, height: 58)
 
-                    }
                     Text("Playhead")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -890,7 +884,7 @@ private struct ReviewTimeline: View {
                 .overlay(alignment: .topLeading) {
                     RoundedRectangle(cornerRadius: 2)
                         .fill(Color.primary)
-                        .frame(width: 2, height: compact ? 100 : 218)
+                        .frame(width: 2, height: 218)
                         .id("playhead")
                         .offset(x: min(width - 3, max(0, x(displayedPosition, width: width) - 1.5)), y: 45)
                         .allowsHitTesting(false)
@@ -900,7 +894,7 @@ private struct ReviewTimeline: View {
                 .onChange(of: focusPlayhead) { _, _ in proxy.scrollTo("playhead", anchor: .center) }
                 }
             }
-            .frame(minHeight: compact ? 150 : 290)
+            .frame(height: 270)
             .disabled(!playback.isReady || playback.duration <= 0)
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Video timeline")

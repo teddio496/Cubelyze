@@ -60,14 +60,15 @@ The switch remembers its setting between launches and does not change the analys
 ## Review workspace
 
 The video, timeline, and inspector use resizable split panes. Hide the inspector
-with the toolbar sidebar button. Transport controls sit beneath the video;
+from the header’s ellipsis menu. Transport controls sit beneath the video;
 phase and event marking controls sit above the timeline. The phase action names
 its next step, and completion exposes Review Events and Next Solve.
 
-Use **Compact / Expand**, **Fit Video**, **Fit Solve**, **Fit Selection**, and the
+All tracks stay visible in a bounded timeline pane. Drag the divider to adjust
+video space. Use **Fit Video**, **Fit Solve**, **Fit Selection**, and the
 **− / +** timeline controls to manage space and zoom. The shared time ruler aligns
 with all lanes; nearby point events are grouped by type and can be selected from
-a count menu or **Event List**. The video has **Fit / − / +** controls; drag the
+a count menu or **More**. The video has **Fit / − / +** controls; drag the
 zoomed picture to pan around the cube.
 
 Selected-event or phase details appear first in the inspector. **Solve Details**
