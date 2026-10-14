@@ -57,6 +57,39 @@ The **Overlay** switch (or ⌘⇧H) shows the current phase and active Pause dir
 on the video. Point events appear only while the playhead is near their timestamp.
 The switch remembers its setting between launches and does not change the analysis.
 
+## Split a practice recording
+
+Choose **Split Recording…** in the library to open a long video in a dedicated
+extraction workspace. The original video is kept unchanged: each solve stores a
+start/end range and shares the recording, without transcoding or copying footage.
+
+- **I** marks the current frame as a solve start; **O** closes the solve and adds
+  it to the library immediately. **Escape** cancels an unfinished start.
+- **Space**, arrow keys, Shift+arrow keys, and playback speeds work as in review.
+  **[ / ]** jumps between marked solves.
+- Click the full-recording timeline to seek, or drag to scrub. Drag a solve's
+  white edge handles to refine its range. Ranges cannot overlap or leave the
+  recording. Boundaries lock once a solve has annotations or phase analysis,
+  preserving its existing local timestamps.
+- **Preview** plays only the selected range. **Analyze** opens it in the normal
+  analyzer with time starting at zero and independent phases, events, tags,
+  scramble, and statistics.
+- Delete a mistaken range with its trash button. Deletion requires confirmation;
+  **⌘Z** undoes range creation, resizing, or deletion while the extraction
+  workspace remains open.
+
+The library's **Practice recordings** section reopens a source with its saved
+ranges. Recordings and extracted solves use the existing JSON solve store, linked
+by stable recording IDs. If the video moves, **Relink…** repairs its reference for
+all related solves. Physical trimming is unavailable for shared extracted ranges;
+optional clip export and automatic solve detection are future work.
+
+Run `sh scripts/test-recording.sh` to check range validation, zero-based video
+composition, source preservation, independent analysis persistence, and legacy
+compatibility. On a Mac with working video playback services, run
+`sh scripts/test-recording-playback.sh` for the live extraction and playback
+checks, and manually verify the keyboard and drag controls.
+
 ## Review workspace
 
 The video, timeline, and inspector use resizable split panes. Hide the inspector

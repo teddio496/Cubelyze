@@ -33,6 +33,10 @@ final class PlaybackModel: ObservableObject {
         UserDefaults.standard.object(forKey: "ShowsAnalysisOverlay") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showsAnalysisOverlay, forKey: "ShowsAnalysisOverlay") }
     }
+    @Published var selectedExtractionID: UUID?
+    @Published var extractionMessage: String?
+    private var previewEnd: Double?
+    private var videoLoadTask: Task<Void, Never>?
     private var restorePosition: Double?
     private var timelineUndoRecorded = false
     private var seekTarget: CMTime?
@@ -47,17 +51,25 @@ final class PlaybackModel: ObservableObject {
     private var videoURL: URL?
     private var scopedVideoURL: URL?
     private var lastTimelineEditSeek: TimeInterval = 0
-    private let analysisStore = AnalysisStore()
+    private let analysisStore: AnalysisStore
     private let trimStore = VideoTrimStore()
     private var undoableTrims: [UUID: (original: Solve, receipt: PendingTrimReceipt)] = [:]
 
     func videoExists(for solve: Solve) -> Bool { analysisStore.videoExists(for: solve) }
+    var librarySolves: [Solve] { solves.filter { $0.isRecording != true } }
+    var recordings: [Solve] { solves.filter { $0.isRecording == true } }
+    var isExtracting: Bool { selectedSolve?.isRecording == true }
+    var extractedSolves: [Solve] {
+        solves.filter { $0.sourceRecordingID == selectedSolveID && $0.sourceRange != nil }
+            .sorted { $0.sourceRange!.start < $1.sourceRange!.start }
+    }
+    var pendingExtractionStart: Double? { selectedSolve?.pendingExtractionStart }
     var selectedSolve: Solve? { solves.first { $0.id == selectedSolveID } }
     var phaseTemplate: SolveMethodTemplate { selectedSolve?.phaseTemplate ?? .standard }
     var canUndoTrim: Bool { selectedSolveID.flatMap { undoableTrims[$0] } != nil && !isTrimming }
     var trimRange: (start: Double, end: Double)? {
         guard !isTrimming, isReady, duration > 0, let solve = selectedSolve,
-              solve.trimmedAt == nil, pendingSegment == nil,
+              solve.trimmedAt == nil, solve.sourceRange == nil, solve.isRecording != true, pendingSegment == nil,
               phaseTemplate.isComplete(segments),
               let first = segments.first, let last = segments.last,
               first.start >= 0, last.end <= duration + 0.05,
@@ -73,7 +85,7 @@ final class PlaybackModel: ObservableObject {
         return (first.start, min(last.end, duration))
     }
 
-    var completedSolveDurations: [Double] { solves.compactMap(\.completedDuration) }
+    var completedSolveDurations: [Double] { librarySolves.compactMap(\.completedDuration) }
 
     func updateMethodTemplate(_ template: SolveMethodTemplate) {
         guard !isTrimming, template != phaseTemplate, !template.phases.isEmpty,
@@ -99,9 +111,9 @@ final class PlaybackModel: ObservableObject {
     var sequenceComplete: Bool { pendingSegment == nil && phaseTemplate.isComplete(segments) }
 
     func adjacentSolve(_ offset: Int) -> Solve? {
-        guard let index = solves.firstIndex(where: { $0.id == selectedSolveID }),
-              solves.indices.contains(index + offset) else { return nil }
-        return solves[index + offset]
+        guard let index = librarySolves.firstIndex(where: { $0.id == selectedSolveID }),
+              librarySolves.indices.contains(index + offset) else { return nil }
+        return librarySolves[index + offset]
     }
     func openAdjacentSolve(_ offset: Int) {
         if let solve = adjacentSolve(offset) { openSolve(solve) }
@@ -124,7 +136,7 @@ final class PlaybackModel: ObservableObject {
         registerUndo(editSnapshot, name: name)
     }
     private func registerUndo(_ snapshot: EditSnapshot, name: String) {
-        let manager = NSApp.keyWindow?.undoManager
+        let manager = NSApp?.keyWindow?.undoManager
         manager?.registerUndo(withTarget: self) { model in
             MainActor.assumeIsolated {
                 guard model.selectedSolveID == snapshot.solveID else { return }
@@ -146,7 +158,8 @@ final class PlaybackModel: ObservableObject {
         scheduleSave()
     }
 
-    init() {
+    init(analysisStore: AnalysisStore = AnalysisStore(), finalizeTrims: Bool = true) {
+        self.analysisStore = analysisStore
         endObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main
         ) { [weak self] notification in
@@ -167,13 +180,14 @@ final class PlaybackModel: ObservableObject {
         }
         do { solves = try analysisStore.allSolves() }
         catch { errorMessage = "Could not load solve library: \(error.localizedDescription)" }
-        finalizePendingTrims()
+        if finalizeTrims { finalizePendingTrims() }
     }
 
     deinit {
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         if let terminationObserver { NotificationCenter.default.removeObserver(terminationObserver) }
         saveTask?.cancel()
+        videoLoadTask?.cancel()
         scopedVideoURL?.stopAccessingSecurityScopedResource()
     }
 
@@ -197,7 +211,7 @@ final class PlaybackModel: ObservableObject {
         for url in urls where url.isFileURL {
             let file = url.standardizedFileURL
             if let match = solves.first(where: {
-                analysisStore.resolveVideoURL(for: $0).standardizedFileURL == file
+                analysisStore.resolveVideoURL(for: $0).standardizedFileURL == file && $0.sourceRange == nil
             }) {
                 existing += 1
                 if urls.count == 1 { first = match }
@@ -259,9 +273,17 @@ final class PlaybackModel: ObservableObject {
         updated.videoPath = file.path
         updated.videoBookmark = analysisStore.bookmark(for: file)
         do {
-            try analysisStore.save(updated)
-            solves[index] = updated
-            if selectedSolveID == id { openSolve(updated) }
+            let sourceID = updated.sourceRecordingID ?? (updated.isRecording == true ? updated.id : nil)
+            let indices = solves.indices.filter { $0 == index || (sourceID != nil &&
+                (solves[$0].id == sourceID || solves[$0].sourceRecordingID == sourceID)) }
+            for sibling in indices {
+                var value = solves[sibling]
+                value.videoPath = file.path
+                value.videoBookmark = updated.videoBookmark
+                try analysisStore.save(value)
+                solves[sibling] = value
+            }
+            if let selected = selectedSolve, indices.contains(where: { solves[$0].id == selected.id }) { openSolve(selected) }
             importMessage = "Video relinked."
         } catch { saveMessage = "Could not relink video: \(error.localizedDescription)" }
     }
@@ -269,11 +291,15 @@ final class PlaybackModel: ObservableObject {
     func openSolve(_ solve: Solve) {
         guard !isTrimming else { return }
         let url = analysisStore.resolveVideoURL(for: solve)
+        videoLoadTask?.cancel()
+        previewEnd = nil
+        selectedExtractionID = nil
+        extractionMessage = nil
         saveTask?.cancel()
         saveNow()
         player.pause()
         scopedVideoURL?.stopAccessingSecurityScopedResource()
-        NSApp.keyWindow?.undoManager?.removeAllActions(withTarget: self)
+        NSApp?.keyWindow?.undoManager?.removeAllActions(withTarget: self)
         timelineUndoRecorded = false
         restorePosition = solve.lastPosition
         selectedSolveID = solve.id
@@ -301,12 +327,28 @@ final class PlaybackModel: ObservableObject {
         playAfterSeek = false
         scrubPosition = nil
         reachedEnd = false
-        player.replaceCurrentItem(with: videoURL.map(AVPlayerItem.init(url:)))
+        player.replaceCurrentItem(with: nil)
+        if let videoURL {
+            if let range = solve.sourceRange {
+                videoLoadTask = Task { [weak self] in
+                    do {
+                        let composition = try await Self.clipAsset(source: videoURL, range: range)
+                        guard !Task.isCancelled, let self, self.selectedSolveID == solve.id else { return }
+                        self.player.replaceCurrentItem(with: AVPlayerItem(asset: composition))
+                    } catch {
+                        guard !Task.isCancelled, let self, self.selectedSolveID == solve.id else { return }
+                        self.errorMessage = "Could not open extracted solve: \(error.localizedDescription)"
+                    }
+                }
+            } else { player.replaceCurrentItem(with: AVPlayerItem(url: videoURL)) }
+        }
         // Review opens paused; restore the saved playhead when the asset is ready.
     }
 
     func showLibrary() {
         guard !isTrimming else { return }
+        videoLoadTask?.cancel()
+        previewEnd = nil
         saveTask?.cancel()
         saveNow()
         player.pause()
@@ -855,6 +897,10 @@ final class PlaybackModel: ObservableObject {
         isPlaying = isSeeking || isScrubbing ? playAfterSeek : player.rate != 0
         let current = player.currentTime().seconds
         let total = item.duration.seconds
+        if let end = previewEnd, !isSeeking, !isScrubbing, current >= end {
+            player.pause()
+            previewEnd = nil
+        }
         position = current.isFinite ? max(0, current) : 0
         duration = total.isFinite ? max(0, total) : 0
         if isReady, duration > 0, let restore = restorePosition {
@@ -864,6 +910,174 @@ final class PlaybackModel: ObservableObject {
         if item.status == .failed, errorMessage == nil {
             errorMessage = item.error?.localizedDescription ?? "This video could not be played."
         }
+    }
+
+    static func clipAsset(source: URL, range: RecordingRange) async throws -> AVMutableComposition {
+        let asset = AVURLAsset(url: source)
+        let total = try await asset.load(.duration).seconds
+        guard range.isValid(duration: total) else {
+            throw NSError(domain: "Cubelyze", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "The source no longer contains this solve range."])
+        }
+        let composition = AVMutableComposition()
+        let timeRange = CMTimeRange(start: CMTime(seconds: range.start, preferredTimescale: 60_000),
+                                    duration: CMTime(seconds: range.duration, preferredTimescale: 60_000))
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        guard !tracks.isEmpty else {
+            throw NSError(domain: "Cubelyze", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "The recording has no video track."])
+        }
+        for track in tracks + (try await asset.loadTracks(withMediaType: .audio)) {
+            guard let output = composition.addMutableTrack(withMediaType: track.mediaType,
+                                                            preferredTrackID: kCMPersistentTrackID_Invalid) else { continue }
+            try output.insertTimeRange(timeRange, of: track, at: .zero)
+            if track.mediaType == .video { output.preferredTransform = try await track.load(.preferredTransform) }
+        }
+        return composition
+    }
+
+    func chooseRecording() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.movie]
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Split Recording"
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor [weak self] in await self?.importRecording(url) }
+        }
+    }
+
+    func importRecording(_ url: URL) async {
+        let file = url.standardizedFileURL
+        if let existing = recordings.first(where: { analysisStore.resolveVideoURL(for: $0).standardizedFileURL == file }) {
+            openSolve(existing)
+            return
+        }
+        let scoped = file.startAccessingSecurityScopedResource()
+        defer { if scoped { file.stopAccessingSecurityScopedResource() } }
+        var recording = Solve(videoPath: file.path, videoBookmark: analysisStore.bookmark(for: file),
+                              recordedAt: await Self.recordingDate(for: file))
+        recording.isRecording = true
+        do {
+            try analysisStore.save(recording)
+            solves.append(recording)
+            openSolve(recording)
+        } catch { errorMessage = "Could not save recording: \(error.localizedDescription)" }
+    }
+
+    func markExtractionStart() {
+        guard isExtracting, isReady, position.isFinite, position < duration,
+              let index = solves.firstIndex(where: { $0.id == selectedSolveID }) else { return }
+        let time = player.currentTime().seconds
+        guard time.isFinite, !extractedSolves.contains(where: { $0.sourceRange!.start <= time && time < $0.sourceRange!.end }) else {
+            extractionMessage = "Choose a start outside the existing solves."
+            return
+        }
+        solves[index].pendingExtractionStart = time
+        extractionMessage = nil
+        previewEnd = nil
+        scheduleSave()
+    }
+
+    func cancelExtractionStart() {
+        guard let index = solves.firstIndex(where: { $0.id == selectedSolveID }), isExtracting else { return }
+        solves[index].pendingExtractionStart = nil
+        scheduleSave()
+    }
+
+    func markExtractionEnd() {
+        guard isExtracting, isReady, let source = selectedSolve, let start = pendingExtractionStart else { return }
+        let range = RecordingRange(start: start, end: player.currentTime().seconds)
+        guard range.isValid(duration: duration, excluding: extractedSolves.compactMap(\.sourceRange)) else {
+            extractionMessage = "End must follow the start and must not overlap another solve."
+            return
+        }
+        var solve = Solve(videoPath: source.videoPath, videoBookmark: source.videoBookmark,
+                          recordedAt: source.recordedAt.addingTimeInterval(start))
+        solve.sourceRecordingID = source.id
+        solve.sourceRange = range
+        do {
+            try analysisStore.save(solve)
+            solves.append(solve)
+            selectedExtractionID = solve.id
+            registerExtractionUndo(solve, replacement: nil, name: "Mark Solve")
+            cancelExtractionStart()
+            extractionMessage = "Solve added to the library. Mark the next start when ready."
+        } catch { extractionMessage = "Could not save solve: \(error.localizedDescription)" }
+    }
+
+    private func registerExtractionUndo(_ current: Solve?, replacement: Solve?, name: String) {
+        let recordingID = selectedSolveID
+        let manager = NSApp?.keyWindow?.undoManager
+        manager?.registerUndo(withTarget: self) { model in
+            MainActor.assumeIsolated {
+                guard model.selectedSolveID == recordingID else { return }
+                do {
+                    if let replacement { try model.analysisStore.save(replacement) }
+                    else if let current { try model.analysisStore.remove(current) }
+                    let id = current?.id ?? replacement!.id
+                    model.solves.removeAll { $0.id == id }
+                    if let replacement { model.solves.append(replacement) }
+                    model.registerExtractionUndo(replacement, replacement: current, name: name)
+                    model.extractionMessage = nil
+                } catch { model.extractionMessage = "Could not undo edit: \(error.localizedDescription)" }
+            }
+        }
+        manager?.setActionName(name)
+    }
+
+    func resizeExtraction(_ solve: Solve, start: Double, end: Double) {
+        guard isExtracting, let index = solves.firstIndex(where: { $0.id == solve.id }),
+              solves[index].sourceRecordingID == selectedSolveID else { return }
+        let original = solves[index]
+        // Boundaries freeze once analysis starts so its local timestamps never silently shift.
+        guard original.segments.isEmpty, original.annotations.isEmpty, original.pendingSegment == nil else {
+            extractionMessage = "This solve has analysis. Its recording boundaries are locked to preserve your work."
+            return
+        }
+        let range = RecordingRange(start: start, end: end)
+        guard range.isValid(duration: duration, excluding: extractedSolves.filter { $0.id != solve.id }.compactMap(\.sourceRange)) else {
+            extractionMessage = "Ranges must stay within the recording and cannot overlap."
+            return
+        }
+        var updated = original
+        updated.sourceRange = range
+        updated.lastPosition = nil
+        updated.recordedAt = selectedSolve!.recordedAt.addingTimeInterval(start)
+        do {
+            try analysisStore.save(updated)
+            solves[index] = updated
+            registerExtractionUndo(updated, replacement: original, name: "Resize Solve")
+            extractionMessage = nil
+        } catch { extractionMessage = "Could not resize solve: \(error.localizedDescription)" }
+    }
+
+    func deleteExtraction(_ solve: Solve) {
+        guard isExtracting, solve.sourceRecordingID == selectedSolveID else { return }
+        do {
+            try analysisStore.remove(solve)
+            solves.removeAll { $0.id == solve.id }
+            registerExtractionUndo(nil, replacement: solve, name: "Delete Solve")
+            if selectedExtractionID == solve.id { selectedExtractionID = nil }
+            extractionMessage = nil
+        } catch { extractionMessage = "Could not delete solve: \(error.localizedDescription)" }
+    }
+
+    func selectExtraction(_ solve: Solve, preview: Bool = false) {
+        guard let range = solve.sourceRange else { return }
+        selectedExtractionID = solve.id
+        player.pause()
+        previewEnd = nil
+        seek(to: range.start)
+        if preview { previewEnd = range.end; playAfterSeek = true }
+    }
+
+    func adjacentExtraction(_ offset: Int) {
+        let ranges = extractedSolves
+        guard !ranges.isEmpty else { return }
+        let current = ranges.firstIndex { $0.id == selectedExtractionID } ?? (offset > 0 ? -1 : ranges.count)
+        let next = min(ranges.count - 1, max(0, current + offset))
+        selectExtraction(ranges[next])
     }
 
     static func timestamp(_ seconds: Double) -> String {

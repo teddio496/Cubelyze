@@ -1,8 +1,12 @@
 import Foundation
 
 struct AnalysisStore {
+    private let directory: URL?
+    init(directory: URL? = nil) { self.directory = directory }
+
     private var solvesDirectory: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        if let directory { return directory }
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("Cubelyze/Solves", isDirectory: true)
     }
 
@@ -21,6 +25,10 @@ struct AnalysisStore {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(solve).write(
             to: solvesDirectory.appendingPathComponent("\(solve.id.uuidString).json"), options: .atomic)
+    }
+
+    func remove(_ solve: Solve) throws {
+        try FileManager.default.removeItem(at: solvesDirectory.appendingPathComponent("\(solve.id.uuidString).json"))
     }
 
     func resolveVideoURL(for solve: Solve) -> URL {

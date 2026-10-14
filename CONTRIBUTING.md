@@ -23,6 +23,7 @@ Cubelyze scheme on My Mac.
 - Build with `sh scripts/build.sh` before submitting.
 - Run `sh scripts/test-phase-templates.sh` for phase progression and persistence
   compatibility changes, and `sh scripts/test-issue-tags.sh` for annotation tags.
+  Run `sh scripts/test-recording.sh` for recording extraction or playback changes.
   Manually exercise affected video-review workflows.
 - Update the README when controls, requirements, storage, or limitations change.
 - Do not commit videos, personal analysis data, build products, or signing keys.
