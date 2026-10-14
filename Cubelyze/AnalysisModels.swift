@@ -161,6 +161,10 @@ struct Solve: Identifiable, Codable {
     let id: UUID
     var videoPath: String
     var videoBookmark: Data?
+    var isRecording: Bool?
+    var sourceRecordingID: UUID?
+    var sourceRange: RecordingRange?
+    var pendingExtractionStart: Double?
     var recordedAt: Date
     let importedAt: Date
     var scramble: String?
@@ -193,6 +197,7 @@ struct Solve: Identifiable, Codable {
     var filename: String { URL(fileURLWithPath: videoPath).lastPathComponent }
     var displayName: String {
         let name = URL(fileURLWithPath: videoPath).deletingPathExtension().lastPathComponent
+        if let sourceRange { return name + " · " + String(format: "%.1f–%.1fs", sourceRange.start, sourceRange.end) }
         if let range = name.range(of: "-trimmed-") { return String(name[..<range.lowerBound]) + " (trimmed)" }
         return name
     }
@@ -200,5 +205,18 @@ struct Solve: Identifiable, Codable {
         guard pendingSegment == nil, phaseTemplate.isComplete(segments),
               let first = segments.first, let last = segments.last else { return nil }
         return max(0, last.end - first.start)
+    }
+}
+
+// Source timestamps remain separate from each derived solve's local analysis clock.
+struct RecordingRange: Codable, Equatable {
+    var start: Double
+    var end: Double
+    var duration: Double { end - start }
+
+    func isValid(duration: Double, excluding others: [RecordingRange] = []) -> Bool {
+        start.isFinite && end.isFinite && duration.isFinite && start >= 0
+            && end <= duration && end - start >= 0.001
+            && others.allSatisfy { end <= $0.start || start >= $0.end }
     }
 }

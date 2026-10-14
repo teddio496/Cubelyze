@@ -11,6 +11,8 @@ struct ContentView: View {
         Group {
             if playback.selectedSolveID == nil {
                 SolveLibrary(playback: playback)
+            } else if playback.isExtracting {
+                RecordingExtractionView(playback: playback)
             } else {
                 analyzer
             }
@@ -93,7 +95,7 @@ private struct SolveLibrary: View {
         return solve.segments.isEmpty && solve.annotations.isEmpty && solve.pendingSegment == nil ? "Unreviewed" : "In progress"
     }
     private var filtered: [Solve] {
-        playback.solves.filter { solve in
+        playback.librarySolves.filter { solve in
             (query.isEmpty || solve.filename.localizedStandardContains(query) || solve.scramble?.localizedStandardContains(query) == true)
                 && (filter == "All" || (filter == "Missing video" ? !playback.videoExists(for: solve) : status(solve) == filter))
         }
@@ -106,10 +108,27 @@ private struct SolveLibrary: View {
             HStack {
                 Text("Solve Library").font(.largeTitle).fontWeight(.semibold)
                 Spacer()
+                Button("Split Recording…", action: playback.chooseRecording)
                 Button("Import Video…", action: playback.chooseVideo).keyboardShortcut("o")
             }
+            if !playback.recordings.isEmpty {
+                DisclosureGroup("Practice recordings (\(playback.recordings.count))") {
+                    ForEach(playback.recordings) { recording in
+                        HStack {
+                            Button(recording.filename) { playback.openSolve(recording) }
+                            Spacer()
+                            Text("\(playback.solves.filter { $0.sourceRecordingID == recording.id }.count) solves")
+                                .foregroundStyle(.secondary)
+                            if !playback.videoExists(for: recording) {
+                                Text("Video missing").foregroundStyle(.secondary)
+                                Button("Relink…") { playback.relinkVideo(for: recording) }
+                            }
+                        }
+                    }
+                }
+            }
             HStack(spacing: 24) {
-                Text("\(playback.solves.count) solves")
+                Text("\(playback.librarySolves.count) solves")
                 Text("\(playback.completedSolveDurations.count) complete")
                 if let best = playback.completedSolveDurations.min() {
                     Text("Best \(PlaybackModel.timestamp(best))")
@@ -126,7 +145,7 @@ private struct SolveLibrary: View {
                 Text(message).foregroundStyle(.secondary)
             }
             if filtered.isEmpty {
-                ContentUnavailableView(playback.solves.isEmpty ? "No solves yet" : "No matching solves",
+                ContentUnavailableView(playback.librarySolves.isEmpty ? "No solves yet" : "No matching solves",
                                        systemImage: "video", description: Text("Import a video or change your search and filter."))
             } else {
                 List {
@@ -184,7 +203,7 @@ private struct SolveThumbnail: View {
             let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
             generator.appliesPreferredTrackTransform = true
             generator.maximumSize = CGSize(width: 224, height: 128)
-            if let result = try? await generator.image(at: CMTime(seconds: solve.segments.first?.start ?? 0, preferredTimescale: 600)) {
+            if let result = try? await generator.image(at: CMTime(seconds: (solve.sourceRange?.start ?? 0) + (solve.segments.first?.start ?? 0), preferredTimescale: 600)) {
                 image = NSImage(cgImage: result.image, size: .zero)
             }
         }
@@ -958,11 +977,21 @@ private struct PlayerView: NSViewRepresentable {
                       NSApp.modalWindow == nil,
                       !(window.firstResponder is NSTextView) else { return event }
                 let modifiers = event.modifierFlags.intersection([.shift, .control, .option, .command])
-                if modifiers == .shift, event.keyCode == 45 {
+                if self.playback.isExtracting, modifiers.isEmpty {
+                    switch event.keyCode {
+                    case 34: if !event.isARepeat { self.playback.markExtractionStart() }; return nil // I
+                    case 31: if !event.isARepeat { self.playback.markExtractionEnd() }; return nil // O
+                    case 33: self.playback.adjacentExtraction(-1); return nil // [
+                    case 30: self.playback.adjacentExtraction(1); return nil // ]
+                    case 53: self.playback.cancelExtractionStart(); return nil
+                    default: break
+                    }
+                }
+                if !self.playback.isExtracting, modifiers == .shift, event.keyCode == 45 {
                     if !event.isARepeat { self.playback.markNextSegmentBoundary() }
                     return nil
                 }
-                if modifiers.isEmpty,
+                if !self.playback.isExtracting, modifiers.isEmpty,
                    let characters = event.charactersIgnoringModifiers,
                    let number = Int(characters),
                    let category = AnnotationCategory(rawValue: number) {
@@ -988,5 +1017,149 @@ private struct PlayerView: NSViewRepresentable {
             if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
             keyMonitor = nil
         }
+    }
+}
+
+
+private struct RecordingExtractionView: View {
+    @ObservedObject var playback: PlaybackModel
+    @State private var deleting: Solve?
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Button("Library") { playback.showLibrary() }
+                Text("Split Recording · \(playback.filename ?? "")").font(.headline).lineLimit(1)
+                Spacer()
+                Button("Open Recording…", action: playback.chooseRecording)
+            }
+            PlayerView(playback: playback).frame(minHeight: 220)
+            ControlBar(playback: playback)
+            RecordingTimeline(playback: playback).frame(height: 90)
+            HStack {
+                Button("Mark Start (I)", action: playback.markExtractionStart)
+                Button("Mark End (O)", action: playback.markExtractionEnd)
+                    .disabled(playback.pendingExtractionStart == nil)
+                if let start = playback.pendingExtractionStart {
+                    Text("Start: \(PlaybackModel.timestamp(start))").monospacedDigit()
+                    Button("Cancel", action: playback.cancelExtractionStart)
+                }
+                Spacer()
+                Text("Space: play · ←/→: frame · Shift+←/→: skip · [/]: previous/next")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.disabled(!playback.isReady)
+            List {
+                ForEach(Array(playback.extractedSolves.enumerated()), id: \.element.id) { index, solve in
+                    if let range = solve.sourceRange {
+                        HStack {
+                            Button("Solve \(index + 1)") { playback.selectExtraction(solve) }
+                                .fontWeight(playback.selectedExtractionID == solve.id ? .bold : .regular)
+                            Text("\(PlaybackModel.timestamp(range.start)) → \(PlaybackModel.timestamp(range.end))")
+                                .monospacedDigit()
+                            Text("\(PlaybackModel.timestamp(range.duration)) · \(solve.segments.isEmpty && solve.annotations.isEmpty && solve.pendingSegment == nil ? "Unreviewed" : "In review")")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Preview") { playback.selectExtraction(solve, preview: true) }.disabled(!playback.isReady)
+                            Button("Analyze") { playback.openSolve(solve) }
+                            Button { deleting = solve } label: { Image(systemName: "trash") }
+                                .help("Delete this solve range and its analysis")
+                        }
+                    }
+                }
+            }.frame(minHeight: 120, maxHeight: 220)
+            Text(playback.extractionMessage ?? playback.errorMessage ?? playback.saveMessage ?? "Mark a start with I and an end with O. Solves are saved immediately; the recording stays unchanged.")
+                .font(.callout).frame(maxWidth: .infinity, alignment: .leading)
+            if let source = playback.selectedSolve, !playback.videoExists(for: source) {
+                Button("Relink Recording…") { playback.relinkVideo(for: source) }
+            }
+        }
+        .padding()
+        .confirmationDialog("Delete this solve and its analysis?", isPresented: Binding(
+            get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
+                Button("Delete Solve", role: .destructive) {
+                    if let deleting { playback.deleteExtraction(deleting) }
+                    deleting = nil
+                }
+                Button("Cancel", role: .cancel) { deleting = nil }
+            } message: { Text("The source recording will be kept. You can undo this deletion with ⌘Z while this screen is open.") }
+    }
+}
+
+private struct RecordingTimeline: View {
+    @ObservedObject var playback: PlaybackModel
+    var body: some View {
+        GeometryReader { geometry in
+            let width = max(1, geometry.size.width)
+            let total = max(0.001, playback.duration)
+            VStack(spacing: 8) {
+                ZStack(alignment: .topLeading) {
+                    RoundedRectangle(cornerRadius: 5).fill(.quaternary).frame(height: 44)
+                        .contentShape(Rectangle())
+                        .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                            playback.scrub(to: Double(value.location.x / width) * total)
+                        }.onEnded { value in
+                            playback.endScrubbing(at: Double(value.location.x / width) * total)
+                        })
+                    ForEach(playback.extractedSolves) { solve in
+                        if let range = solve.sourceRange {
+                            RecordingRangeBlock(playback: playback, solve: solve, range: range,
+                                                width: width, total: total)
+                        }
+                    }
+                    if let start = playback.pendingExtractionStart {
+                        Rectangle().fill(.orange).frame(width: 2, height: 44)
+                            .offset(x: width * start / total).allowsHitTesting(false)
+                    }
+                    Rectangle().fill(.red).frame(width: 2, height: 48)
+                        .offset(x: width * min(total, playback.scrubPosition ?? playback.position) / total)
+                        .allowsHitTesting(false)
+                }.frame(height: 48)
+                HStack {
+                    Text("0:00")
+                    Spacer()
+                    Text(PlaybackModel.timestamp(playback.duration))
+                }.font(.caption).monospacedDigit().foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct RecordingRangeBlock: View {
+    @ObservedObject var playback: PlaybackModel
+    let solve: Solve
+    let range: RecordingRange
+    let width: CGFloat
+    let total: Double
+    @State private var draft: RecordingRange?
+
+    var body: some View {
+        let displayed = draft ?? range
+        let blockWidth = max(4, width * displayed.duration / total)
+        HStack(spacing: 0) {
+            edge(start: true)
+            Rectangle().fill(playback.selectedExtractionID == solve.id ? Color.accentColor : Color.teal.opacity(0.65))
+                .onTapGesture { playback.selectExtraction(solve) }
+            edge(start: false)
+        }
+        .frame(width: blockWidth, height: 40)
+        .offset(x: width * displayed.start / total, y: 2)
+        .help("\(PlaybackModel.timestamp(displayed.start))–\(PlaybackModel.timestamp(displayed.end)); drag edges to resize")
+        .accessibilityLabel("Solve range, \(PlaybackModel.timestamp(displayed.duration))")
+    }
+
+    private func edge(start: Bool) -> some View {
+        Rectangle().fill(.white.opacity(0.8)).frame(width: 5)
+            .gesture(DragGesture(minimumDistance: 1).onChanged { value in
+                var candidate = range
+                let time = (start ? range.start : range.end) + Double(value.translation.width / width) * total
+                if start { candidate.start = max(0, min(range.end - 0.001, time)) }
+                else { candidate.end = min(total, max(range.start + 0.001, time)) }
+                guard candidate.isValid(duration: total, excluding: playback.extractedSolves.filter { $0.id != solve.id }.compactMap(\.sourceRange)) else { return }
+                draft = candidate
+                playback.seekForTimelineEdit(to: start ? candidate.start : candidate.end)
+            }.onEnded { _ in
+                if let draft { playback.resizeExtraction(solve, start: draft.start, end: draft.end) }
+                draft = nil
+            })
     }
 }

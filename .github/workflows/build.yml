@@ -24,3 +24,8 @@ jobs:
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             build
+      - name: Verify analysis and recording workflows
+        run: |
+          sh scripts/test-phase-templates.sh
+          sh scripts/test-issue-tags.sh
+          sh scripts/test-recording.sh
